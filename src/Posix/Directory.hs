@@ -8,17 +8,14 @@ module Posix.Directory
   ) where
 
 import Data.Primitive (Addr(..),ByteArray)
-import GHC.Exts (Ptr(..),Int(..),RealWorld,touch#,byteArrayContents#,unsafeFreezeByteArray#)
-import GHC.Exts (newPinnedByteArray#,isMutableByteArrayPinned#)
+import GHC.Exts (Ptr(..))
 import Foreign.Ptr (nullPtr)
-import Foreign.C.Error (throwErrno,eRANGE,getErrno)
+import Foreign.C.Error (Errno,eRANGE,getErrno)
 import Foreign.C.Types (CChar,CSize(..))
 import GHC.IO (IO(..))
-import Control.Monad.Primitive (primitive_)
 
 import qualified Data.Primitive as PM
 import qualified Foreign.Storable as FS
-import qualified Foreign.Marshal.Alloc as FMA
 
 foreign import ccall safe "getcwd"
   c_getcwd :: Ptr CChar -> CSize -> IO (Ptr CChar)
@@ -26,24 +23,31 @@ foreign import ccall safe "getcwd"
 -- | Get the current working directory without using the system locale
 --   to convert it to text. This is implemented with a safe FFI call
 --   since it may block.
-getCurrentWorkingDirectory :: IO ByteArray
+getCurrentWorkingDirectory :: IO (Either Errno ByteArray)
 getCurrentWorkingDirectory = go (4096 - chunkOverhead) where
   go !sz = do
-    marr <- PM.newByteArray sz
-    strSize <- withMutableByteArray marr $ \(Addr addr) -> do
-      ptr <- c_getcwd (Ptr addr) (intToCSize sz)
-      if ptr /= nullPtr
-        then findNullByte ptr
-        else do
-          errno <- getErrno
-          if errno == eRANGE
-            then pure (-1)
-            else throwErrno "Posix.Directory.getCurrentWorkingDirectory"
-    if strSize == (-1)
-      then go (2 * sz)
+    -- It may be nice to add a variant of getCurrentWorkingDirectory that
+    -- allow the user to supply an initial pinned buffer. I'm not sure
+    -- how many other POSIX functions there are that could benefit
+    -- from this. Calls to getCurrentWorkingDirectory are extremely rare,
+    -- so there would be little benefit here, but there may be other
+    -- functions where these repeated 4KB allocations might trigger
+    -- GC very quickly.
+    marr <- PM.newPinnedByteArray sz
+    let !(Addr addr) = PM.mutableByteArrayContents marr
+    ptr <- c_getcwd (Ptr addr) (intToCSize sz)
+    if ptr /= nullPtr
+      then do
+        strSize <- findNullByte ptr
+        dst <- PM.newByteArray strSize
+        PM.copyMutableByteArray dst 0 marr 0 strSize
+        dst' <- PM.unsafeFreezeByteArray dst
+        pure (Right dst')
       else do
-        marr' <- PM.resizeMutableByteArray marr strSize
-        PM.unsafeFreezeByteArray marr'
+        errno <- getErrno
+        if errno == eRANGE
+          then go (2 * sz)
+          else fmap Left getErrno
 
 chunkOverhead :: Int
 chunkOverhead = 2 * PM.sizeOf (undefined :: Int)
@@ -60,43 +64,4 @@ findNullByte = go 0 where
     FS.peekElemOff ptr ix >>= \case
       0 -> pure ix
       _ -> go (ix + 1) ptr
-
-withMutableByteArray ::
-     PM.MutableByteArray RealWorld
-  -> (PM.Addr -> IO b) -- ^ buffer filling function
-  -> IO b
-{-# INLINE withMutableByteArray #-}
-withMutableByteArray marr@(PM.MutableByteArray marr#) f =
-  case isMutableByteArrayPinned# marr# of
-    1# -> do
-      let !addr = PM.mutableByteArrayContents marr
-      r <- f addr
-      -- TODO: Replace this use of touch# with with# once it is
-      -- released. For now, be careful to only use this with
-      -- buffer-filling functions that GHC does not believe
-      -- will certainly error. This is pretty easy to do in practice.
-      -- Just do not call throwIO or error.
-      primitive_ (touch# marr#)
-      pure r
-    _ -> do
-      n <- PM.getSizeofMutableByteArray marr
-      inlineAllocaBytes n $ \addr -> do
-        !r <- f addr
-        PM.copyAddrToByteArray marr 0 addr n
-        return r
-
--- We redefine allocaBytes here to remove the NOINLINE pragma present
--- until base-4.12. We know that we are not doing anything dangerous
--- here since we do not feed throwIO into the callback.
-inlineAllocaBytes :: Int -> (Addr -> IO b) -> IO b
-inlineAllocaBytes (I# size) action = IO $ \ s0 ->
-     case newPinnedByteArray# size s0      of { (# s1, mbarr# #) ->
-     case unsafeFreezeByteArray# mbarr# s1 of { (# s2, barr#  #) ->
-     let addr = Addr (byteArrayContents# barr#) in
-     case action addr     of { IO action' ->
-     case action' s2      of { (# s3, r #) ->
-     case touch# barr# s3 of { s4 ->
-     (# s4, r #)
-  }}}}}
-
 
