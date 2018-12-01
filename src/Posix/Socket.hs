@@ -1,29 +1,43 @@
 {-# language MagicHash #-}
+{-# language ScopedTypeVariables #-}
 {-# language UnliftedFFITypes #-}
 
+-- | Types and functions related to the POSIX sockets API.
+--   Unusual characteristics:
+--
+--   * Any time the standard calls for @socklen_t@, we use
+--     @CInt@ instead. Linus Torvalds <https://yarchive.net/comp/linux/socklen_t.html writes>
+--     that \"Any sane library must have socklen_t be the same size as int.
+--     Anything else breaks any BSD socket layer stuff.\"
 module Posix.Socket
   ( socket
   , bind
+    -- * Accept
+  , accept
+  , accept_
     -- * Send
   , send
-  , sendUnsafe
-  , sendByteArrayUnsafe
-  , sendMutableByteArrayUnsafe
+  , unsafeSend
+  , unsafeSendByteArray
+  , unsafeSendMutableByteArray
     -- * Receive
   , receive
-  , receiveUnsafe
-  , receiveMutableByteArrayUnsafe
+  , unsafeReceive
+  , unsafeReceiveMutableByteArray
   ) where
 
-import GHC.Exts (RealWorld,ByteArray#,MutableByteArray#,Addr#)
 import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Void (Void)
+import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
+import Foreign.Ptr (nullPtr)
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#)
 import Posix.Socket.Types (Family(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (SendFlags(..),ReceiveFlags(..))
 import System.Posix.Types (Fd(..),CSsize(..))
-import Foreign.C.Error (Errno,getErrno)
 
 import qualified Data.Primitive as PM
+import qualified Foreign.Storable as FS
 
 foreign import ccall safe "sys/socket.h socket"
   c_socket :: Family -> Type -> Protocol -> IO Fd
@@ -38,6 +52,20 @@ foreign import ccall safe "sys/socket.h socket"
 -- violates this assumption, this wrapper will be broken on that platform.
 foreign import ccall safe "sys/socket.h bind"
   c_bind :: Fd -> ByteArray# -> CInt -> IO CInt
+
+-- Per the spec, the type signature of accept is:
+--   int accept(int socket, struct sockaddr *restrict address, socklen_t *restrict address_len);
+-- The restrict keyword does not matter much for our purposes. See the
+-- note on c_bind for why we use CInt for socklen_t. Remember that the
+-- bytearray argument is actually SocketAddress in the function that
+-- wraps this one.
+foreign import ccall safe "sys/socket.h accept"
+  c_safe_accept :: Fd
+           -> MutableByteArray# RealWorld -- SocketAddress
+           -> MutableByteArray# RealWorld -- Ptr CInt
+           -> IO Fd
+foreign import ccall safe "sys/socket.h accept"
+  c_safe_ptr_accept :: Fd -> Ptr Void -> Ptr CInt -> IO Fd
 
 -- There are several options for wrapping send. Both safe and unsafe
 -- are useful. Additionally, in the unsafe category, we also
@@ -90,6 +118,54 @@ bind fd (SocketAddress b@(ByteArray b#)) = do
     then pure (Right ())
     else fmap Left getErrno
 
+-- | Extract the first connection on the queue of pending connections. The
+--   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
+--   includes more details. This function\'s type differs slightly from
+--   the specification:
+--
+--   > int accept(int socket, struct sockaddr *restrict address, socklen_t *restrict address_len);
+--
+--   Instead of requiring the caller to prepare buffers through which
+--   information is returned, this haskell binding to @accept@ prepares
+--   those buffers internally. This eschews C\'s characteristic buffer-passing
+--   in favor of the Haskell convention of allocating internally and returning.
+--
+--   More specifically, this binding lacks an argument corresponding to the
+--   @sockaddr@ buffer from the specification. That mutable buffer is allocated
+--   internally, resized and frozen upon a success, and returned along with
+--   the file descriptor of the accepted socket. The size of this buffer is
+--   determined by the second argument (maximum socket address size). This
+--   size argument is also writen to the @address_len@ buffer, which is also
+--   allocated internally. The size returned through this pointer is used to
+--   resize the @sockaddr@ buffer, which is then frozen so that an immutable
+--   'SocketAddress' is returned to the end user.
+--
+--   For applications uninterested in the peer (described by @sockaddr@),
+--   POSIX @accept@ allows the null pointer to be passed as both @address@ and
+--   @address_len@. This behavior is provided by 'accept_'.
+accept ::
+     Fd -- ^ Socket
+  -> CInt -- ^ Maximum socket address size
+  -> IO (Either Errno (SocketAddress,Fd))
+accept sock maxSz = do
+  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newPinnedByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: CInt))
+  PM.writeByteArray lenBuf 0 maxSz
+  r <- c_safe_accept sock sockAddrBuf# lenBuf#
+  if r > (-1)
+    then do
+      (sz :: CInt) <- PM.readByteArray lenBuf 0
+      sockAddr <- PM.unsafeFreezeByteArray =<< PM.resizeMutableByteArray sockAddrBuf (cintToInt sz)
+      pure (Right (SocketAddress sockAddr,r))
+    else fmap Left getErrno
+
+-- | A variant of 'accept' that does not provide the user with a
+--   'SocketAddress' detailing the peer.
+accept_ :: Fd -> IO (Either Errno Fd)
+accept_ sock =
+  c_safe_ptr_accept sock nullPtr nullPtr >>= errorsFromFd
+  
+
 -- | Send data from an address over a network socket. This uses the safe FFI.
 send ::
      Fd -- ^ Socket
@@ -104,40 +180,40 @@ send fd (Addr addr) len flags =
 --   Users of this function should be sure to set flags that prohibit this
 --   from blocking. On Linux this is accomplished with @O_NONBLOCK@. It is
 --   often desirable to call 'threadWaitWrite' on a nonblocking socket before
---   calling @sendUnsafe@ on it.
-sendUnsafe ::
+--   calling @unsafeSend@ on it.
+unsafeSend ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
   -> IO (Either Errno CSize)
-sendUnsafe fd (Addr addr) len flags =
+unsafeSend fd (Addr addr) len flags =
   c_unsafe_addr_send fd addr len flags >>= errorsFromSize
 
 -- | Send data from a byte array over a network socket. This uses the unsafe FFI;
 --   considerations pertaining to 'sendUnsafe' apply to this function as well. Users
 --   may specify a length to send fewer bytes than are actually present in the
 --   array. However, there is currently no option to provide an offset.
-sendByteArrayUnsafe ::
+unsafeSendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
   -> IO (Either Errno CSize)
-sendByteArrayUnsafe fd (ByteArray b) len flags =
+unsafeSendByteArray fd (ByteArray b) len flags =
   c_unsafe_bytearray_send fd b len flags >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. This uses the unsafe FFI;
 --   considerations pertaining to 'sendUnsafe' apply to this function as well. Users
 --   may specify a length to send fewer bytes than are actually present in the
 --   array. However, there is currently no option to provide an offset.
-sendMutableByteArrayUnsafe ::
+unsafeSendMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source mutable byte array
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
   -> IO (Either Errno CSize)
-sendMutableByteArrayUnsafe fd (MutableByteArray b) len flags =
+unsafeSendMutableByteArray fd (MutableByteArray b) len flags =
   c_unsafe_mutable_bytearray_send fd b len flags >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This wraps @recv@ using
@@ -158,13 +234,13 @@ receive fd (Addr addr) len flags =
 --   the @MSG_DONTWAIT@ flag and handling the resulting @EAGAIN@ or
 --   @EWOULDBLOCK@. When the returned size is zero, there are no additional
 --   bytes to receive and the peer has performed an orderly shutdown.
-receiveUnsafe ::
+unsafeReceive ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> ReceiveFlags -- ^ Flags
   -> IO (Either Errno CSize)
-receiveUnsafe fd (Addr addr) len flags =
+unsafeReceive fd (Addr addr) len flags =
   c_unsafe_addr_recv fd addr len flags >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This uses the unsafe
@@ -172,13 +248,13 @@ receiveUnsafe fd (Addr addr) len flags =
 --   as well. Users may specify a length to receive fewer bytes than are
 --   actually present in the mutable byte array. However, there is currently
 --   to way to provide an offset into the array.
-receiveMutableByteArrayUnsafe ::
+unsafeReceiveMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> ReceiveFlags -- ^ Flags
   -> IO (Either Errno CSize)
-receiveMutableByteArrayUnsafe fd (MutableByteArray b) len flags =
+unsafeReceiveMutableByteArray fd (MutableByteArray b) len flags =
   c_unsafe_mutable_byte_array_recv fd b len flags >>= errorsFromSize
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
@@ -186,10 +262,20 @@ errorsFromSize r = if r > (-1)
   then pure (Right (cssizeToCSize r))
   else fmap Left getErrno
 
+errorsFromFd :: Fd -> IO (Either Errno Fd)
+errorsFromFd r = if r > (-1)
+  then pure (Right r)
+  else fmap Left getErrno
+
+
 intToCInt :: Int -> CInt
 intToCInt = fromIntegral
+
+cintToInt :: CInt -> Int
+cintToInt = fromIntegral
 
 -- only call this when it is known that the argument is non-negative
 cssizeToCSize :: CSsize -> CSize
 cssizeToCSize = fromIntegral
+
 

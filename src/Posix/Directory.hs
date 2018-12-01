@@ -36,6 +36,7 @@ getCurrentWorkingDirectory = go (4096 - chunkOverhead) where
     marr <- PM.newPinnedByteArray sz
     let !(Addr addr) = PM.mutableByteArrayContents marr
     ptr <- c_getcwd (Ptr addr) (intToCSize sz)
+    -- We probably want to use touch# or with# here.
     if ptr /= nullPtr
       then do
         strSize <- findNullByte ptr
