@@ -7,14 +7,17 @@
 --
 --   * Any time the standard calls for @socklen_t@, we use
 --     @CInt@ instead. Linus Torvalds <https://yarchive.net/comp/linux/socklen_t.html writes>
---     that \"Any sane library must have socklen_t be the same size as int.
+--     that \"Any sane library must have @socklen_t@ be the same size as @int@.
 --     Anything else breaks any BSD socket layer stuff.\"
 module Posix.Socket
   ( socket
   , bind
+  , listen
     -- * Accept
   , accept
   , accept_
+    -- * Connect
+  , connect
     -- * Send
   , send
   , unsafeSend
@@ -37,10 +40,12 @@ import Posix.Socket.Types (SendFlags(..),ReceiveFlags(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Data.Primitive as PM
-import qualified Foreign.Storable as FS
 
 foreign import ccall safe "sys/socket.h socket"
   c_socket :: Family -> Type -> Protocol -> IO Fd
+
+foreign import ccall unsafe "sys/socket.h listen"
+  c_listen :: Fd -> CInt -> IO CInt
 
 -- Per the spec, the type signature of bind is:
 --   int bind(int socket, const struct sockaddr *address, socklen_t address_len);
@@ -57,15 +62,21 @@ foreign import ccall safe "sys/socket.h bind"
 --   int accept(int socket, struct sockaddr *restrict address, socklen_t *restrict address_len);
 -- The restrict keyword does not matter much for our purposes. See the
 -- note on c_bind for why we use CInt for socklen_t. Remember that the
--- bytearray argument is actually SocketAddress in the function that
--- wraps this one.
+-- first bytearray argument is actually SocketAddress in the function that
+-- wraps this one. The second bytearray argument is a pointer to the size.
 foreign import ccall safe "sys/socket.h accept"
   c_safe_accept :: Fd
-           -> MutableByteArray# RealWorld -- SocketAddress
-           -> MutableByteArray# RealWorld -- Ptr CInt
-           -> IO Fd
+                -> MutableByteArray# RealWorld -- SocketAddress
+                -> MutableByteArray# RealWorld -- Ptr CInt
+                -> IO Fd
 foreign import ccall safe "sys/socket.h accept"
   c_safe_ptr_accept :: Fd -> Ptr Void -> Ptr CInt -> IO Fd
+
+-- Per the spec the type signature of connect is:
+--   int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+-- The bytearray argument is actually SocketAddress.
+foreign import ccall safe "sys/socket.h connect"
+  c_safe_connect :: Fd -> ByteArray# -> CInt -> IO CInt
 
 -- There are several options for wrapping send. Both safe and unsafe
 -- are useful. Additionally, in the unsafe category, we also
@@ -102,21 +113,39 @@ socket dom typ prot = do
     then pure (Right r)
     else fmap Left getErrno
 
--- | Assign a local socket address address to a socket identified by descriptor socket that has
---   no local socket address assigned. The
+-- | Assign a local socket address address to a socket identified by
+--   descriptor socket that has no local socket address assigned. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/bind.html POSIX specification>
---   includes more details. This wrapper represents the @sockaddr@ pointer argument, together
---   with its @socklen_t@ size as a pinned byte array. This is unfortunate, but it
---   allows @bind@ to be used with @sockaddr@ extensions on various platforms.
+--   includes more details. The 'SocketAddress' represents the @sockaddr@ pointer argument, together
+--   with its @socklen_t@ size, as a byte array. This allows @bind@ to
+--   be used with @sockaddr@ extensions on various platforms.
 bind ::
      Fd -- ^ Socket
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
-bind fd (SocketAddress b@(ByteArray b#)) = do
-  r <- c_bind fd b# (intToCInt (PM.sizeofByteArray b))
-  if r == 0
-    then pure (Right ())
-    else fmap Left getErrno
+bind fd (SocketAddress b@(ByteArray b#)) =
+  c_bind fd b# (intToCInt (PM.sizeofByteArray b)) >>= errorsFromInt
+
+-- | Mark the socket as a passive socket, that is, as a socket that
+--   will be used to accept incoming connection requests using @accept@.
+--   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/listen.html POSIX specification>
+--   includes more details. Listen uses the unsafe FFI since it cannot block
+--   and always returns promptly.
+listen ::
+     Fd -- ^ Socket
+  -> CInt -- ^ Backlog
+  -> IO (Either Errno ())
+listen fd backlog = c_listen fd backlog >>= errorsFromInt
+
+-- | Connect the socket to the specified socket address.
+--   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
+--   includes more details.
+connect ::
+     Fd -- ^ Fd
+  -> SocketAddress -- ^ Socket address, extensible tagged union
+  -> IO (Either Errno ())
+connect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
+  c_safe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
 
 -- | Extract the first connection on the queue of pending connections. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
@@ -144,9 +173,9 @@ bind fd (SocketAddress b@(ByteArray b#)) = do
 --   POSIX @accept@ allows the null pointer to be passed as both @address@ and
 --   @address_len@. This behavior is provided by 'accept_'.
 accept ::
-     Fd -- ^ Socket
+     Fd -- ^ Listening socket
   -> CInt -- ^ Maximum socket address size
-  -> IO (Either Errno (SocketAddress,Fd))
+  -> IO (Either Errno (SocketAddress,Fd)) -- ^ Peer information and connected socket
 accept sock maxSz = do
   sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newPinnedByteArray (cintToInt maxSz)
   lenBuf@(MutableByteArray lenBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: CInt))
@@ -161,14 +190,16 @@ accept sock maxSz = do
 
 -- | A variant of 'accept' that does not provide the user with a
 --   'SocketAddress' detailing the peer.
-accept_ :: Fd -> IO (Either Errno Fd)
+accept_ ::
+     Fd -- ^ Listening socket
+  -> IO (Either Errno Fd) -- ^ Connected socket
 accept_ sock =
   c_safe_ptr_accept sock nullPtr nullPtr >>= errorsFromFd
   
 
 -- | Send data from an address over a network socket. This uses the safe FFI.
 send ::
-     Fd -- ^ Socket
+     Fd -- ^ Connected socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
@@ -267,6 +298,13 @@ errorsFromFd r = if r > (-1)
   then pure (Right r)
   else fmap Left getErrno
 
+-- Sometimes, functions that return an int use zero to indicate
+-- success and negative one to indicate failure without including
+-- additional information in the value.
+errorsFromInt :: CInt -> IO (Either Errno ())
+errorsFromInt r = if r == 1
+  then pure (Right ())
+  else fmap Left getErrno
 
 intToCInt :: Int -> CInt
 intToCInt = fromIntegral
