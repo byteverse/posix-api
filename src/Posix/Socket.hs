@@ -10,14 +10,17 @@
 --     that \"Any sane library must have @socklen_t@ be the same size as @int@.
 --     Anything else breaks any BSD socket layer stuff.\"
 module Posix.Socket
-  ( socket
+  ( -- * Socket
+    socket
+    -- * Bind
   , bind
+    -- * Connect
+  , connect
+    -- * Listen
   , listen
     -- * Accept
   , accept
   , accept_
-    -- * Connect
-  , connect
     -- * Send
   , send
   , unsafeSend
@@ -139,7 +142,9 @@ listen fd backlog = c_listen fd backlog >>= errorsFromInt
 
 -- | Connect the socket to the specified socket address.
 --   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
---   includes more details.
+--   includes more details. An @unsafeConnect@ using the unsafe FFI is
+--   not provided since there is no way to hook such a beast into the
+--   event manager.
 connect ::
      Fd -- ^ Fd
   -> SocketAddress -- ^ Socket address, extensible tagged union
