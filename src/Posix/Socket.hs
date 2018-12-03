@@ -1,6 +1,8 @@
+{-# language BangPatterns #-}
 {-# language MagicHash #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnliftedFFITypes #-}
+{-# language UnboxedTuples #-}
 
 -- | Types and functions related to the POSIX sockets API.
 --   Unusual characteristics:
@@ -12,6 +14,8 @@
 module Posix.Socket
   ( -- * Socket
     socket
+    -- * Socket Pair
+  , socketPair
     -- * Bind
   , bind
     -- * Connect
@@ -23,29 +27,35 @@ module Posix.Socket
   , accept_
     -- * Send
   , send
+  , sendByteArray
   , unsafeSend
   , unsafeSendByteArray
   , unsafeSendMutableByteArray
     -- * Receive
   , receive
+  , receiveByteArray
   , unsafeReceive
   , unsafeReceiveMutableByteArray
   ) where
 
-import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..))
+import GHC.IO (IO(..))
+import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
 import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#)
-import Posix.Socket.Types (Family(..),Protocol(..),Type(..),SocketAddress(..))
+import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (SendFlags(..),ReceiveFlags(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Data.Primitive as PM
 
 foreign import ccall safe "sys/socket.h socket"
-  c_socket :: Family -> Type -> Protocol -> IO Fd
+  c_socket :: Domain -> Type -> Protocol -> IO Fd
+
+foreign import ccall safe "sys/socket.h socketpair"
+  c_socketpair :: Domain -> Type -> Protocol -> MutableByteArray# RealWorld -> IO CInt
 
 foreign import ccall unsafe "sys/socket.h listen"
   c_listen :: Fd -> CInt -> IO CInt
@@ -88,6 +98,10 @@ foreign import ccall safe "sys/socket.h connect"
 -- while the FFI call is taking place.
 foreign import ccall safe "sys/socket.h send"
   c_safe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
+foreign import ccall safe "sys/socket.h send"
+  c_safe_bytearray_send :: Fd -> ByteArray# -> CSize -> SendFlags -> IO CSsize
+foreign import ccall safe "sys/socket.h send"
+  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CSize -> SendFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
   c_unsafe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
@@ -109,11 +123,34 @@ foreign import ccall unsafe "sys/socket.h recv"
 --   includes more details. This is implemented as a safe FFI
 --   call. It is unclear to the library author whether or not
 --   it may block.
-socket :: Family -> Type -> Protocol -> IO (Either Errno Fd)
-socket dom typ prot = do
-  r <- c_socket dom typ prot
-  if r > (-1)
-    then pure (Right r)
+socket ::
+     Domain -- ^ Communications domain (e.g. 'internet', 'unix')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
+  -> Protocol -- ^ Protocol
+  -> IO (Either Errno Fd)
+socket dom typ prot = c_socket dom typ prot >>= errorsFromFd
+
+-- | Create an unbound pair of connected sockets in a specified domain, of
+--   a specified type, under the protocol optionally specified by the protocol
+--   argument. The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/socketpair.html POSIX specification>
+--   includes more details. This is implemented as an unsafe FFI call.
+--   The author suspects that it cannot block, but this assumption may
+--   be wrong.
+socketPair ::
+     Domain -- ^ Communications domain (probably 'unix')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
+  -> Protocol -- ^ Protocol
+  -> IO (Either Errno (Fd,Fd))
+socketPair dom typ prot = do
+  -- If this ever switches to the safe FFI, we will need to use
+  -- a pinned array here instead.
+  (sockets@(MutablePrimArray sockets#) :: MutablePrimArray RealWorld Fd) <- PM.newPrimArray 2
+  r <- c_socketpair dom typ prot sockets#
+  if r == 0
+    then do
+      fd1 <- PM.readPrimArray sockets 0
+      fd2 <- PM.readPrimArray sockets 1
+      pure (Right (fd1,fd2))
     else fmap Left getErrno
 
 -- | Assign a local socket address address to a socket identified by
@@ -200,9 +237,27 @@ accept_ ::
   -> IO (Either Errno Fd) -- ^ Connected socket
 accept_ sock =
   c_safe_ptr_accept sock nullPtr nullPtr >>= errorsFromFd
-  
 
--- | Send data from an address over a network socket. This uses the safe FFI.
+-- | Send data from a byte array over a network socket. Users
+--   may specify a length to send fewer bytes than are actually present in the
+--   array. However, there is currently no option to provide an offset. Since
+--   this uses the safe FFI, this will allocate a copy of the bytearry if it
+--   was not already pinned.
+sendByteArray ::
+     Fd -- ^ Socket
+  -> ByteArray -- ^ Source byte array
+  -> CSize -- ^ Length in bytes
+  -> SendFlags -- ^ Flags
+  -> IO (Either Errno CSize)
+sendByteArray fd b@(ByteArray b#) len flags = if PM.isByteArrayPinned b
+  then errorsFromSize =<< c_safe_bytearray_send fd b# len flags
+  else do
+    x@(MutableByteArray x#) <- PM.newByteArray (csizeToInt len)
+    PM.copyByteArray x 0 b 0 (csizeToInt len)
+    errorsFromSize =<< c_safe_mutablebytearray_send fd x# len flags
+
+-- | Send data from an address over a network socket. This is not guaranteed
+--   to send the entire length This uses the safe FFI.
 send ::
      Fd -- ^ Connected socket
   -> Addr -- ^ Source address
@@ -264,6 +319,29 @@ receive ::
 receive fd (Addr addr) len flags =
   c_safe_addr_recv fd addr len flags >>= errorsFromSize
 
+-- | Receive data into a byte array from a network socket. This wraps @recv@ using
+--   the safe FFI. When the returned size is zero, there are no additional bytes
+--   to receive and the peer has performed an orderly shutdown.
+receiveByteArray ::
+     Fd -- ^ Socket
+  -> CSize -- ^ Length in bytes
+  -> ReceiveFlags -- ^ Flags
+  -> IO (Either Errno ByteArray)
+receiveByteArray fd len flags = do
+  m <- PM.newPinnedByteArray (csizeToInt len)
+  let !(Addr addr) = PM.mutableByteArrayContents m
+  r <- c_safe_addr_recv fd addr len flags
+  if r /= (-1)
+    then do
+      -- Why copy when we could just shrink? We want to always return
+      -- byte arrays that are not explicitly pinned.
+      let sz = cssizeToInt r
+      x <- PM.newByteArray sz
+      PM.copyMutableByteArray x 0 m 0 sz
+      a <- PM.unsafeFreezeByteArray x
+      pure (Right a)
+    else fmap Left getErrno
+
 -- | Receive data into an address from a network socket. This wraps @recv@
 --   using the unsafe FFI. Users of this function should be sure to set flags
 --   that prohibit this from blocking. On Linux this is accomplished by setting
@@ -317,8 +395,19 @@ intToCInt = fromIntegral
 cintToInt :: CInt -> Int
 cintToInt = fromIntegral
 
+csizeToInt :: CSize -> Int
+csizeToInt = fromIntegral
+
+cssizeToInt :: CSsize -> Int
+cssizeToInt = fromIntegral
+
 -- only call this when it is known that the argument is non-negative
 cssizeToCSize :: CSsize -> CSize
 cssizeToCSize = fromIntegral
 
+-- touchByteArray :: ByteArray -> IO ()
+-- touchByteArray (ByteArray x) = touchByteArray# x
+-- 
+-- touchByteArray# :: ByteArray# -> IO ()
+-- touchByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
