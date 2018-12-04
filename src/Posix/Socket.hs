@@ -11,6 +11,11 @@
 --     @CInt@ instead. Linus Torvalds <https://yarchive.net/comp/linux/socklen_t.html writes>
 --     that \"Any sane library must have @socklen_t@ be the same size as @int@.
 --     Anything else breaks any BSD socket layer stuff.\"
+--   * Send and receive each have several variants. They are distinguished by
+--     the safe/unsafe FFI use and by the @Addr@/@ByteArray@/@MutableByteArray@
+--     buffer type. They all call @send@ or @recv@ exactly once. They do not
+--     repeatedly make syscalls like some of the functions in @network@.
+--     Users who want that behavior need to build on top of this package.
 module Posix.Socket
   ( -- * Socket
     socket
@@ -98,24 +103,24 @@ foreign import ccall safe "sys/socket.h connect"
 -- while the FFI call is taking place.
 foreign import ccall safe "sys/socket.h send"
   c_safe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
-foreign import ccall safe "sys/socket.h send"
-  c_safe_bytearray_send :: Fd -> ByteArray# -> CSize -> SendFlags -> IO CSsize
-foreign import ccall safe "sys/socket.h send"
-  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CSize -> SendFlags -> IO CSsize
+foreign import ccall safe "sys/socket.h send_offset"
+  c_safe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> SendFlags -> IO CSsize
+foreign import ccall safe "sys/socket.h send_offset"
+  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> SendFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
   c_unsafe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
-foreign import ccall unsafe "sys/socket.h send"
-  c_unsafe_bytearray_send :: Fd -> ByteArray# -> CSize -> SendFlags -> IO CSsize
-foreign import ccall unsafe "sys/socket.h send"
-  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CSize -> SendFlags -> IO CSsize
+foreign import ccall unsafe "sys/socket.h send_offset"
+  c_unsafe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> SendFlags -> IO CSsize
+foreign import ccall unsafe "sys/socket.h send_offset"
+  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> SendFlags -> IO CSsize
 
 -- There are several ways to wrap recv.
 foreign import ccall safe "sys/socket.h recv"
   c_safe_addr_recv :: Fd -> Addr# -> CSize -> ReceiveFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recv"
   c_unsafe_addr_recv :: Fd -> Addr# -> CSize -> ReceiveFlags -> IO CSsize
-foreign import ccall unsafe "sys/socket.h recv"
-  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> CSize -> ReceiveFlags -> IO CSsize
+foreign import ccall unsafe "sys/socket.h recv_offset"
+  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> ReceiveFlags -> IO CSsize
 
 -- | Create an endpoint for communication, returning a file
 --   descriptor that refers to that endpoint. The
@@ -246,15 +251,17 @@ accept_ sock =
 sendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
+  -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
-  -> IO (Either Errno CSize)
-sendByteArray fd b@(ByteArray b#) len flags = if PM.isByteArrayPinned b
-  then errorsFromSize =<< c_safe_bytearray_send fd b# len flags
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
+  then errorsFromSize =<< c_safe_bytearray_send fd b# off len flags
   else do
-    x@(MutableByteArray x#) <- PM.newByteArray (csizeToInt len)
-    PM.copyByteArray x 0 b 0 (csizeToInt len)
-    errorsFromSize =<< c_safe_mutablebytearray_send fd x# len flags
+    x <- PM.newPinnedByteArray (csizeToInt len)
+    PM.copyByteArray x (cintToInt off) b 0 (csizeToInt len)
+    let !(Addr addr) = PM.mutableByteArrayContents x
+    errorsFromSize =<< c_safe_addr_send fd addr len flags
 
 -- | Send data from an address over a network socket. This is not guaranteed
 --   to send the entire length This uses the safe FFI.
@@ -263,7 +270,7 @@ send ::
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
-  -> IO (Either Errno CSize)
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 send fd (Addr addr) len flags =
   c_safe_addr_send fd addr len flags >>= errorsFromSize
 
@@ -277,7 +284,7 @@ unsafeSend ::
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
-  -> IO (Either Errno CSize)
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 unsafeSend fd (Addr addr) len flags =
   c_unsafe_addr_send fd addr len flags >>= errorsFromSize
 
@@ -288,24 +295,26 @@ unsafeSend fd (Addr addr) len flags =
 unsafeSendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
+  -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
-  -> IO (Either Errno CSize)
-unsafeSendByteArray fd (ByteArray b) len flags =
-  c_unsafe_bytearray_send fd b len flags >>= errorsFromSize
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+unsafeSendByteArray fd (ByteArray b) off len flags =
+  c_unsafe_bytearray_send fd b off len flags >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. This uses the unsafe FFI;
 --   considerations pertaining to 'sendUnsafe' apply to this function as well. Users
 --   may specify a length to send fewer bytes than are actually present in the
---   array. However, there is currently no option to provide an offset.
+--   array.
 unsafeSendMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source mutable byte array
+  -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> SendFlags -- ^ Flags
-  -> IO (Either Errno CSize)
-unsafeSendMutableByteArray fd (MutableByteArray b) len flags =
-  c_unsafe_mutable_bytearray_send fd b len flags >>= errorsFromSize
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+unsafeSendMutableByteArray fd (MutableByteArray b) off len flags =
+  c_unsafe_mutable_bytearray_send fd b off len flags >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This wraps @recv@ using
 --   the safe FFI. When the returned size is zero, there are no additional bytes
@@ -360,16 +369,16 @@ unsafeReceive fd (Addr addr) len flags =
 -- | Receive data into an address from a network socket. This uses the unsafe
 --   FFI; considerations pertaining to 'receiveUnsafe' apply to this function
 --   as well. Users may specify a length to receive fewer bytes than are
---   actually present in the mutable byte array. However, there is currently
---   to way to provide an offset into the array.
+--   actually present in the mutable byte array.
 unsafeReceiveMutableByteArray ::
      Fd -- ^ Socket
-  -> MutableByteArray RealWorld -- ^ Source address
-  -> CSize -- ^ Length in bytes
+  -> MutableByteArray RealWorld -- ^ Destination byte array
+  -> CInt -- ^ Destination offset
+  -> CSize -- ^ Maximum bytes to receive
   -> ReceiveFlags -- ^ Flags
-  -> IO (Either Errno CSize)
-unsafeReceiveMutableByteArray fd (MutableByteArray b) len flags =
-  c_unsafe_mutable_byte_array_recv fd b len flags >>= errorsFromSize
+  -> IO (Either Errno CSize) -- ^ Bytes received into array
+unsafeReceiveMutableByteArray fd (MutableByteArray b) off len flags =
+  c_unsafe_mutable_byte_array_recv fd b off len flags >>= errorsFromSize
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)
