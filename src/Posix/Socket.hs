@@ -1,4 +1,5 @@
 {-# language BangPatterns #-}
+{-# language InterruptibleFFI #-}
 {-# language MagicHash #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnliftedFFITypes #-}
@@ -33,6 +34,7 @@ module Posix.Socket
     -- * Send
   , send
   , sendByteArray
+  , sendMutableByteArray
   , unsafeSend
   , unsafeSendByteArray
   , unsafeSendMutableByteArray
@@ -56,10 +58,10 @@ import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Data.Primitive as PM
 
-foreign import ccall safe "sys/socket.h socket"
+foreign import ccall unsafe "sys/socket.h socket"
   c_socket :: Domain -> Type -> Protocol -> IO Fd
 
-foreign import ccall safe "sys/socket.h socketpair"
+foreign import ccall unsafe "sys/socket.h socketpair"
   c_socketpair :: Domain -> Type -> Protocol -> MutableByteArray# RealWorld -> IO CInt
 
 foreign import ccall unsafe "sys/socket.h listen"
@@ -73,7 +75,7 @@ foreign import ccall unsafe "sys/socket.h listen"
 -- be the same size as int. Anything else breaks any BSD socket layer stuff."
 -- (https://yarchive.net/comp/linux/socklen_t.html). If a platform
 -- violates this assumption, this wrapper will be broken on that platform.
-foreign import ccall safe "sys/socket.h bind"
+foreign import ccall unsafe "sys/socket.h bind"
   c_bind :: Fd -> ByteArray# -> CInt -> IO CInt
 
 -- Per the spec, the type signature of accept is:
@@ -82,31 +84,35 @@ foreign import ccall safe "sys/socket.h bind"
 -- note on c_bind for why we use CInt for socklen_t. Remember that the
 -- first bytearray argument is actually SocketAddress in the function that
 -- wraps this one. The second bytearray argument is a pointer to the size.
-foreign import ccall safe "sys/socket.h accept"
+foreign import ccall interruptible "sys/socket.h accept"
   c_safe_accept :: Fd
                 -> MutableByteArray# RealWorld -- SocketAddress
                 -> MutableByteArray# RealWorld -- Ptr CInt
                 -> IO Fd
-foreign import ccall safe "sys/socket.h accept"
+foreign import ccall interruptible "sys/socket.h accept"
   c_safe_ptr_accept :: Fd -> Ptr Void -> Ptr CInt -> IO Fd
 
 -- Per the spec the type signature of connect is:
 --   int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 -- The bytearray argument is actually SocketAddress.
-foreign import ccall safe "sys/socket.h connect"
+foreign import ccall interruptible "sys/socket.h connect"
   c_safe_connect :: Fd -> ByteArray# -> CInt -> IO CInt
 
 -- There are several options for wrapping send. Both safe and unsafe
 -- are useful. Additionally, in the unsafe category, we also
 -- have the option of writing to either an address or a byte array.
 -- Unsafe FFI calls guarantee that byte arrays will not be relocated
--- while the FFI call is taking place.
-foreign import ccall safe "sys/socket.h send"
+-- while the FFI call is taking place. Safe FFI calls do not have
+-- this guarantee, so internally we must be careful when using these to only
+-- provide pinned byte arrays as arguments.
+foreign import ccall interruptible "sys/socket.h send"
   c_safe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
-foreign import ccall safe "sys/socket.h send_offset"
+foreign import ccall interruptible "sys/socket.h send_offset"
   c_safe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> SendFlags -> IO CSsize
-foreign import ccall safe "sys/socket.h send_offset"
+foreign import ccall interruptible "sys/socket.h send_offset"
   c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> SendFlags -> IO CSsize
+foreign import ccall interruptible "sys/socket.h send"
+  c_safe_mutablebytearray_no_offset_send :: Fd -> MutableByteArray# RealWorld -> CSize -> SendFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
   c_unsafe_addr_send :: Fd -> Addr# -> CSize -> SendFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send_offset"
@@ -115,7 +121,7 @@ foreign import ccall unsafe "sys/socket.h send_offset"
   c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> SendFlags -> IO CSsize
 
 -- There are several ways to wrap recv.
-foreign import ccall safe "sys/socket.h recv"
+foreign import ccall interruptible "sys/socket.h recv"
   c_safe_addr_recv :: Fd -> Addr# -> CSize -> ReceiveFlags -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recv"
   c_unsafe_addr_recv :: Fd -> Addr# -> CSize -> ReceiveFlags -> IO CSsize
@@ -125,9 +131,8 @@ foreign import ccall unsafe "sys/socket.h recv_offset"
 -- | Create an endpoint for communication, returning a file
 --   descriptor that refers to that endpoint. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/socket.html POSIX specification>
---   includes more details. This is implemented as a safe FFI
---   call. It is unclear to the library author whether or not
---   it may block.
+--   includes more details. This is implemented as a unsafe FFI
+--   call since the author believes that it cannot block indefinitely.
 socket ::
      Domain -- ^ Communications domain (e.g. 'internet', 'unix')
   -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
@@ -138,9 +143,8 @@ socket dom typ prot = c_socket dom typ prot >>= errorsFromFd
 -- | Create an unbound pair of connected sockets in a specified domain, of
 --   a specified type, under the protocol optionally specified by the protocol
 --   argument. The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/socketpair.html POSIX specification>
---   includes more details. This is implemented as an unsafe FFI call.
---   The author suspects that it cannot block, but this assumption may
---   be wrong.
+--   includes more details. This is implemented as an unsafe FFI call
+--   since the author believes that it cannot block indefinitely.
 socketPair ::
      Domain -- ^ Communications domain (probably 'unix')
   -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
@@ -163,7 +167,8 @@ socketPair dom typ prot = do
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/bind.html POSIX specification>
 --   includes more details. The 'SocketAddress' represents the @sockaddr@ pointer argument, together
 --   with its @socklen_t@ size, as a byte array. This allows @bind@ to
---   be used with @sockaddr@ extensions on various platforms.
+--   be used with @sockaddr@ extensions on various platforms. This uses
+--   the unsafe FFI since the author believes it cannot block indefinitely.
 bind ::
      Fd -- ^ Socket
   -> SocketAddress -- ^ Socket address, extensible tagged union
@@ -244,10 +249,10 @@ accept_ sock =
   c_safe_ptr_accept sock nullPtr nullPtr >>= errorsFromFd
 
 -- | Send data from a byte array over a network socket. Users
---   may specify a length to send fewer bytes than are actually present in the
---   array. However, there is currently no option to provide an offset. Since
---   this uses the safe FFI, this will allocate a copy of the bytearry if it
---   was not already pinned.
+--   may specify an offset and a length to send fewer bytes than are
+--   actually present in the array. Since this uses the safe interruptible
+--   FFI, it allocates a pinned copy of the bytearry if it was not
+--   already pinned.
 sendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
@@ -258,13 +263,32 @@ sendByteArray ::
 sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
   then errorsFromSize =<< c_safe_bytearray_send fd b# off len flags
   else do
-    x <- PM.newPinnedByteArray (csizeToInt len)
+    x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
     PM.copyByteArray x (cintToInt off) b 0 (csizeToInt len)
-    let !(Addr addr) = PM.mutableByteArrayContents x
-    errorsFromSize =<< c_safe_addr_send fd addr len flags
+    errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
+
+-- | Send data from a mutable byte array over a network socket. Users
+--   may specify an offset and a length to send fewer bytes than are
+--   actually present in the array. Since this uses the safe interruptible
+--   FFI, it allocates a pinned copy of the bytearry if it was not
+--   already pinned.
+sendMutableByteArray ::
+     Fd -- ^ Socket
+  -> MutableByteArray RealWorld -- ^ Source byte array
+  -> CInt -- ^ Offset into source array
+  -> CSize -- ^ Length in bytes
+  -> SendFlags -- ^ Flags
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if PM.isMutableByteArrayPinned b
+  then errorsFromSize =<< c_safe_mutablebytearray_send fd b# off len flags
+  else do
+    x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
+    PM.copyMutableByteArray x (cintToInt off) b 0 (csizeToInt len)
+    errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
 -- | Send data from an address over a network socket. This is not guaranteed
---   to send the entire length This uses the safe FFI.
+--   to send the entire length. This uses the safe interruptible FFI since
+--   it may block indefinitely.
 send ::
      Fd -- ^ Connected socket
   -> Addr -- ^ Source address
@@ -317,8 +341,8 @@ unsafeSendMutableByteArray fd (MutableByteArray b) off len flags =
   c_unsafe_mutable_bytearray_send fd b off len flags >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This wraps @recv@ using
---   the safe FFI. When the returned size is zero, there are no additional bytes
---   to receive and the peer has performed an orderly shutdown.
+--   the safe interruptible FFI. When the returned size is zero, there are no
+--   additional bytes to receive and the peer has performed an orderly shutdown.
 receive ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
@@ -329,8 +353,8 @@ receive fd (Addr addr) len flags =
   c_safe_addr_recv fd addr len flags >>= errorsFromSize
 
 -- | Receive data into a byte array from a network socket. This wraps @recv@ using
---   the safe FFI. When the returned size is zero, there are no additional bytes
---   to receive and the peer has performed an orderly shutdown.
+--   the safe interruptible FFI. When the returned size is zero, there are no
+--   additional bytes to receive and the peer has performed an orderly shutdown.
 receiveByteArray ::
      Fd -- ^ Socket
   -> CSize -- ^ Length in bytes

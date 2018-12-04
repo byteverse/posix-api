@@ -23,7 +23,7 @@ tests :: TestTree
 tests = testGroup "Tests"
   [ testGroup "sockets"
     [ testCase "A" testSocketsA
-    -- , testCase "B" testSocketsB
+    , testCase "B" testSocketsB
     , testCase "C" testSocketsC
     , testCase "D" testSocketsD
     ]
@@ -37,7 +37,7 @@ testSocketsA = do
   bytesSent <- demand =<< S.sendByteArray a sample 0 5 mempty
   when (bytesSent /= 5) (fail "testSocketsA: bytesSent was wrong")
   actual <- demand =<< PM.takeMVar m
-  actual @=? sample
+  sample @=? actual
 
 testSocketsC :: Assertion
 testSocketsC = do
@@ -47,7 +47,7 @@ testSocketsC = do
   bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
   when (bytesSent /= 5) (fail "testSocketsC: bytesSent was wrong")
   actual <- demand =<< PM.takeMVar m
-  actual @=? sample
+  sample @=? actual
 
 testSocketsD :: Assertion
 testSocketsD = do
@@ -56,11 +56,11 @@ testSocketsD = do
     bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
     when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
   actual <- demand =<< S.receiveByteArray a 5 mempty
-  actual @=? sample
+  sample @=? actual
 
 testSocketsB :: Assertion
 testSocketsB = do
-  let limit = 1
+  let limit = 10
       wordSz = PM.sizeOf (undefined :: Int)
       cwordSz = fromIntegral wordSz :: CSize
   (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
@@ -71,10 +71,8 @@ testSocketsB = do
           PM.writeByteArray y 0 (1 + n)
           z <- PM.unsafeFreezeByteArray y
           oneWord =<< demand =<< S.sendByteArray b z 0 cwordSz mempty
-          -- threadWaitRead b
           x <- demand =<< S.receiveByteArray b cwordSz mempty
           go1 (ix + 1) (PM.indexByteArray x 0)
-          -- go1 (ix + 1) 42
         else pure n
       go2 !(ix :: Int) = if (ix < limit)
         then do
@@ -88,7 +86,7 @@ testSocketsB = do
   _ <- forkIO (go2 0)
   r <- go1 0 0
   PM.takeMVar lock
-  r @=? 50
+  20 @=? r
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
