@@ -31,6 +31,9 @@ module Posix.Socket
     -- * Accept
   , accept
   , accept_
+    -- * Close
+  , close
+  , unsafeClose
     -- * Send
   , send
   , sendByteArray
@@ -66,6 +69,12 @@ foreign import ccall unsafe "sys/socket.h socketpair"
 
 foreign import ccall unsafe "sys/socket.h listen"
   c_listen :: Fd -> CInt -> IO CInt
+
+foreign import ccall interruptible "unistd.h close"
+  c_safe_close :: Fd -> IO CInt
+
+foreign import ccall unsafe "unistd.h close"
+  c_unsafe_close :: Fd -> IO CInt
 
 -- Per the spec, the type signature of bind is:
 --   int bind(int socket, const struct sockaddr *address, socklen_t address_len);
@@ -403,6 +412,25 @@ unsafeReceiveMutableByteArray ::
   -> IO (Either Errno CSize) -- ^ Bytes received into array
 unsafeReceiveMutableByteArray fd (MutableByteArray b) off len flags =
   c_unsafe_mutable_byte_array_recv fd b off len flags >>= errorsFromSize
+
+-- | Close a socket. The <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>
+--   includes more details. This uses the safe interruptible FFI.
+close ::
+     Fd -- ^ Socket
+  -> IO (Either Errno ())
+close fd = c_safe_close fd >>= errorsFromInt
+
+-- | Close a socket. This uses the unsafe FFI. According to the
+--   <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>,
+--   "If @fildes@ refers to a socket, @close()@ shall cause the socket to
+--   be destroyed. If the socket is in connection-mode, and the @SO_LINGER@
+--   option is set for the socket with non-zero linger time, and the socket
+--   has untransmitted data, then @close()@ shall block for up to the current
+--   linger interval until all data is transmitted."
+unsafeClose ::
+     Fd -- ^ Socket
+  -> IO (Either Errno ())
+unsafeClose fd = c_unsafe_close fd >>= errorsFromInt
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)

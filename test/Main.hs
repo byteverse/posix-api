@@ -39,25 +39,6 @@ testSocketsA = do
   actual <- demand =<< PM.takeMVar m
   sample @=? actual
 
-testSocketsC :: Assertion
-testSocketsC = do
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
-  m <- PM.newEmptyMVar
-  _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
-  bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
-  when (bytesSent /= 5) (fail "testSocketsC: bytesSent was wrong")
-  actual <- demand =<< PM.takeMVar m
-  sample @=? actual
-
-testSocketsD :: Assertion
-testSocketsD = do
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
-  _ <- forkIO $ do
-    bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
-    when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
-  actual <- demand =<< S.receiveByteArray a 5 mempty
-  sample @=? actual
-
 testSocketsB :: Assertion
 testSocketsB = do
   let limit = 10
@@ -87,6 +68,25 @@ testSocketsB = do
   r <- go1 0 0
   PM.takeMVar lock
   20 @=? r
+
+testSocketsC :: Assertion
+testSocketsC = do
+  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  m <- PM.newEmptyMVar
+  _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
+  bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
+  when (bytesSent /= 5) (fail "testSocketsC: bytesSent was wrong")
+  actual <- demand =<< PM.takeMVar m
+  sample @=? actual
+
+testSocketsD :: Assertion
+testSocketsD = do
+  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  _ <- forkIO $ do
+    bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
+    when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
+  actual <- demand =<< S.receiveByteArray a 5 mempty
+  sample @=? actual
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
