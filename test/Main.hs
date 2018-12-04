@@ -23,8 +23,9 @@ tests :: TestTree
 tests = testGroup "Tests"
   [ testGroup "sockets"
     [ testCase "A" testSocketsA
-    , testCase "B" testSocketsB
+    -- , testCase "B" testSocketsB
     , testCase "C" testSocketsC
+    , testCase "D" testSocketsD
     ]
   ]
 
@@ -34,7 +35,7 @@ testSocketsA = do
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray b 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray a sample 0 5 mempty
-  when (bytesSent /= 5) (fail "testPair: bytesSent was wrong")
+  when (bytesSent /= 5) (fail "testSocketsA: bytesSent was wrong")
   actual <- demand =<< PM.takeMVar m
   actual @=? sample
 
@@ -44,8 +45,17 @@ testSocketsC = do
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
-  when (bytesSent /= 5) (fail "testPair: bytesSent was wrong")
+  when (bytesSent /= 5) (fail "testSocketsC: bytesSent was wrong")
   actual <- demand =<< PM.takeMVar m
+  actual @=? sample
+
+testSocketsD :: Assertion
+testSocketsD = do
+  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  _ <- forkIO $ do
+    bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
+    when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
+  actual <- demand =<< S.receiveByteArray a 5 mempty
   actual @=? sample
 
 testSocketsB :: Assertion
@@ -63,8 +73,8 @@ testSocketsB = do
           oneWord =<< demand =<< S.sendByteArray b z 0 cwordSz mempty
           -- threadWaitRead b
           x <- demand =<< S.receiveByteArray b cwordSz mempty
-          -- go1 (ix + 1) (PM.indexByteArray x 0)
-          go1 (ix + 1) 42
+          go1 (ix + 1) (PM.indexByteArray x 0)
+          -- go1 (ix + 1) 42
         else pure n
       go2 !(ix :: Int) = if (ix < limit)
         then do
