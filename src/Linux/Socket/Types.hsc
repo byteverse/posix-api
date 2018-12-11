@@ -22,13 +22,14 @@ module Linux.Socket.Types
   , raw
   ) where
 
-import GHC.IO (IO(..))
-import Foreign.C.Types (CUShort)
 import Data.Primitive (ByteArray(..),Addr(..))
 import Data.Void (Void)
-import GHC.Exts (ByteArray##,State##,RealWorld,Ptr(..),runRW##,touch##)
-import Posix.Socket (SocketAddressInternet(..),SocketAddressUnix(..),SocketAddress(..),Type(..))
+import Data.Word (Word8)
+import Foreign.C.Types (CUShort)
 import Foreign.Storable (pokeByteOff)
+import GHC.Exts (ByteArray##,State##,RealWorld,Ptr(..),runRW##,touch##)
+import GHC.IO (IO(..))
+import Posix.Socket (SocketAddressInternet(..),SocketAddressUnix(..),SocketAddress(..),Type(..))
 
 import qualified Data.Primitive as PM
 import qualified Foreign.Storable as FS
@@ -36,7 +37,12 @@ import qualified Foreign.Storable as FS
 encodeSocketAddressInternet :: SocketAddressInternet -> SocketAddress
 encodeSocketAddressInternet (SocketAddressInternet netPort netAddr) =
   SocketAddress $ runByteArrayIO $ unboxByteArrayIO $ do
-    bs <- PM.newPinnedByteArray #{size struct sockaddr_in}
+    bs <- PM.newPinnedByteArray #{size struct sockaddr}
+    -- Initialize the bytearray by filling it with zeroes to ensure
+    -- that the sin_zero padding that linux expects is properly zeroed.
+    -- Notice that the size of the byte array is the size of sockaddr,
+    -- not the size of sockaddr_in.
+    PM.setByteArray bs 0 #{size struct sockaddr} (0 :: Word8)
     let !(Addr addr) = PM.mutableByteArrayContents bs
     let !(ptr :: Ptr Void) = Ptr addr
     -- ATM: I cannot find a way to poke AF_INET into the socket address
