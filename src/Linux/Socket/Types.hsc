@@ -52,6 +52,10 @@ encodeSocketAddressInternet (SocketAddressInternet netPort netAddr) =
     -- that linux will ever change to bit size of sa_family_t, so I
     -- am not too concerned.
     #{poke struct sockaddr_in, sin_family} ptr (#{const AF_INET} :: CUShort)
+    -- TODO: the port and the address are supposed to be in network
+    -- byte order. Figure out where we want this conversion to
+    -- take place. I think that "in the data type" is the right
+    -- answer though.
     #{poke struct sockaddr_in, sin_port} ptr netPort
     #{poke struct sockaddr_in, sin_addr} ptr netAddr
     r <- PM.unsafeFreezeByteArray bs
