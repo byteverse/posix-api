@@ -37,7 +37,10 @@ maintainer: andrew.thaddeus@gmail.com
 copyright: 2018 Andrew Martin
 category: System
 build-type: Simple
-extra-source-files: CHANGELOG.md
+extra-source-files:
+  CHANGELOG.md
+  cbits/HaskellPosix.c
+  include/HaskellPosix.h
 
 library
   exposed-modules:
