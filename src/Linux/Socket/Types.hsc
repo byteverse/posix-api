@@ -15,8 +15,11 @@
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
 module Linux.Socket.Types
-  ( encodeSocketAddressInternet
+  ( -- * Encoding Socket Addresses
+    encodeSocketAddressInternet
   , encodeSocketAddressUnix
+    -- * Socket Types
+  , raw
   ) where
 
 import GHC.IO (IO(..))
@@ -24,7 +27,7 @@ import Foreign.C.Types (CUShort)
 import Data.Primitive (ByteArray(..),Addr(..))
 import Data.Void (Void)
 import GHC.Exts (ByteArray##,State##,RealWorld,Ptr(..),runRW##,touch##)
-import Posix.Socket (SocketAddressInternet(..),SocketAddressUnix(..),SocketAddress(..))
+import Posix.Socket (SocketAddressInternet(..),SocketAddressUnix(..),SocketAddress(..),Type(..))
 import Foreign.Storable (pokeByteOff)
 
 import qualified Data.Primitive as PM
@@ -73,4 +76,9 @@ unboxByteArrayIO (IO f) s = case f s of
 -- runST in this module.
 runByteArrayIO :: (State## RealWorld -> (## State## RealWorld, ByteArray## ##)) -> ByteArray
 runByteArrayIO st_rep = case runRW## st_rep of (## _, a ##) -> ByteArray a
+
+-- | The @SOCK_RAW@ socket type.
+raw :: Type
+raw = Type #{const SOCK_RAW}
+
 
