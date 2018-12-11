@@ -1,5 +1,5 @@
 cabal-version: 2.2
-name: posix
+name: posix-api
 version: 0.1.0.0
 synopsis: posix bindings
 description:
@@ -29,7 +29,7 @@ description:
   toward an audience that understands how to use `threadWaitRead`
   and `threadWaitWrite` with unsafe FFI calls to avoid blocking
   the runtime.
-homepage: https://github.com/andrewthad/posix
+homepage: https://github.com/andrewthad/posix-api
 license: BSD-3-Clause
 license-file: LICENSE
 author: Andrew Martin
