@@ -24,6 +24,33 @@ description:
     are exported, making the types extensible for operating system that
     have additional flags.
   .
+  About a dozen other packages offers wrappers for some subset of the POSIX
+  specification are strewn across hackage. They include `regex-posix`,
+  `posix-paths`, `posix-timer`, `posix-socket`, `posix-filelock`,
+  `posix-acl`, etc. This library differs from all off these in various
+  ways. Here are some of the design guidelines followed here that distinguish
+  this package from some or all of these others:
+  .
+  * Scope. Although this library does not include all APIs specified by
+    POSIX, it welcomes as many of them as anyone is willing to implement.
+  .
+  * Monomorphization. Effectful functions in this library return their
+    results in `IO` rather than using a type that involves `MonadIO`
+    or `MonadBaseControl`.
+  .
+  * Typeclass Avoidance. This library does not introduce new typeclasses.
+    Overloading is eschewed in favor of providing multiple functions
+    with distinct names.
+  .
+  * Minimality. Functions wrapping the POSIX APIs do little more than
+    wrap the underlying functions. The major deviation here is that,
+    when applicable, the wrappers allocate buffers are the underlying
+    functions fill. This eschews C's characteristic buffer-passing
+    in favor of the Haskell convention of allocating internally and returning.
+    A more minor deviation is that for safe FFI calls, this library
+    will perform additional work to ensure that only pinned byte arrays are
+    handed over.
+  .
   Unlike `network`, this sockets API in this library does not integrate
   sockets with GHC's event manager. This is geared
   toward an audience that understands how to use `threadWaitRead`
@@ -46,7 +73,9 @@ library
   exposed-modules:
     Posix.Directory
     Posix.Socket
+  other-modules:
     Posix.Socket.Types
+    Linux.Socket.Types
   build-depends:
     , base >=4.11.1 && <5
     , primitive >= 0.6.4

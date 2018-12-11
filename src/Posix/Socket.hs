@@ -18,34 +18,59 @@
 --     repeatedly make syscalls like some of the functions in @network@.
 --     Users who want that behavior need to build on top of this package.
 module Posix.Socket
-  ( -- * Socket
+  ( -- * Functions
+    -- ** Socket
     socket
-    -- * Socket Pair
+    -- ** Socket Pair
   , socketPair
-    -- * Bind
+    -- ** Bind
   , bind
-    -- * Connect
+    -- ** Connect
   , connect
-    -- * Listen
+    -- ** Listen
   , listen
-    -- * Accept
+    -- ** Accept
   , accept
   , accept_
-    -- * Close
+    -- ** Close
   , close
   , unsafeClose
-    -- * Send
+    -- ** Send
   , send
   , sendByteArray
   , sendMutableByteArray
   , unsafeSend
   , unsafeSendByteArray
   , unsafeSendMutableByteArray
-    -- * Receive
+    -- ** Receive
   , receive
   , receiveByteArray
   , unsafeReceive
   , unsafeReceiveMutableByteArray
+    -- * Types
+  , Domain(..)
+  , Type(..)
+  , Protocol(..)
+  , SocketAddress(..)
+  , PST.SocketAddressInternet(..)
+  , PST.SocketAddressUnix(..)
+  , SendFlags(..)
+  , ReceiveFlags(..)
+    -- * Data Construction
+    -- ** Socket Families
+  , PST.unix
+  , PST.unspecified
+  , PST.internet
+    -- ** Socket Types
+  , PST.stream
+  , PST.datagram
+  , PST.sequencedPacket
+    -- ** Protocols
+  , PST.defaultProtocol
+    -- ** Receive Flags
+  , PST.peek
+  , PST.outOfBand
+  , PST.waitAll
   ) where
 
 import GHC.IO (IO(..))
@@ -59,6 +84,7 @@ import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (SendFlags(..),ReceiveFlags(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
+import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
 
 foreign import ccall unsafe "sys/socket.h socket"

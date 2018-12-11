@@ -12,6 +12,7 @@ module Posix.Socket.Types
   , Protocol(..)
   , SocketAddress(..)
   , SocketAddressInternet(..)
+  , SocketAddressInternet6(..)
   , SocketAddressUnix(..)
   , SendFlags(..)
   , ReceiveFlags(..)
@@ -34,7 +35,7 @@ module Posix.Socket.Types
 import Foreign.C.Types (CInt(..))
 import Data.Primitive (ByteArray)
 import Data.Bits (Bits,(.|.))
-import Data.Word (Word16,Word32)
+import Data.Word (Word16,Word32,Word64)
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
@@ -84,6 +85,15 @@ newtype SocketAddress = SocketAddress ByteArray
 data SocketAddressInternet = SocketAddressInternet
   { port :: !Word16
   , address :: !Word32
+  }
+
+-- Revisit this. We really need a standard Word128 type somewhere.
+data SocketAddressInternet6 = SocketAddressInternet6
+  { port :: !Word16
+  , flowInfo :: !Word32
+  , addressA :: !Word64
+  , addressB :: !Word64
+  , scopeId :: !Word32
   }
 
 -- | An address for a UNIX domain socket. The
