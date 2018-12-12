@@ -14,12 +14,10 @@
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
-module Linux.Socket.Types
+module Posix.Socket.Platform
   ( -- * Encoding Socket Addresses
     encodeSocketAddressInternet
   , encodeSocketAddressUnix
-    -- * Socket Types
-  , raw
   ) where
 
 import Data.Primitive (ByteArray(..),Addr(..))
@@ -29,11 +27,15 @@ import Foreign.C.Types (CUShort)
 import Foreign.Storable (pokeByteOff)
 import GHC.Exts (ByteArray##,State##,RealWorld,Ptr(..),runRW##,touch##)
 import GHC.IO (IO(..))
-import Posix.Socket (SocketAddressInternet(..),SocketAddressUnix(..),SocketAddress(..),Type(..))
+import Posix.Socket.Types (SocketAddressInternet(..),SocketAddressUnix(..))
+import Posix.Socket.Types (SocketAddress(..))
+import Control.Monad (when)
 
 import qualified Data.Primitive as PM
 import qualified Foreign.Storable as FS
 
+-- | Serialize a IPv4 socket address so that it may be passed to @bind@.
+--   This serialization is operating-system dependent.
 encodeSocketAddressInternet :: SocketAddressInternet -> SocketAddress
 encodeSocketAddressInternet (SocketAddressInternet netPort netAddr) =
   SocketAddress $ runByteArrayIO $ unboxByteArrayIO $ do
@@ -62,14 +64,28 @@ encodeSocketAddressInternet (SocketAddressInternet netPort netAddr) =
     touchByteArray r
     pure r
 
+-- | Serialize a unix domain socket address so that it may be passed to @bind@.
+--   This serialization is operating-system dependent. If the path provided by
+--   the argument equals or exceeds the size of @sun_path@ (typically in the range 92
+--   to 108 but varies by platform), the socket address will instead be given the
+--   empty string as its path. This typically results in @bind@ returning an
+--   error code.
 encodeSocketAddressUnix :: SocketAddressUnix -> SocketAddress
 encodeSocketAddressUnix (SocketAddressUnix !name) =
   SocketAddress $ runByteArrayIO $ unboxByteArrayIO $ do 
-    let sz = PM.sizeofByteArray name
-    -- Again, we hard-code the size of sa_family_t. Disappointing.
-    bs <- PM.newPinnedByteArray (sz + FS.sizeOf (undefined :: CUShort))
+    -- On linux, sun_path always has exactly 108 bytes. It is a null-terminated
+    -- string, so we initialize the byte array to zeroes to ensure this
+    -- happens.
+    let pathSize = 108 :: Int
+    -- Again, we hard-code the size of sa_family_t as the size of
+    -- an unsigned short.
+    let familySize = FS.sizeOf (undefined :: CUShort)
+    bs <- PM.newPinnedByteArray (pathSize + familySize)
+    PM.setByteArray bs familySize pathSize (0 :: Word8)
     PM.writeByteArray bs 0 (#{const AF_INET} :: CUShort)
-    PM.copyByteArray bs (FS.sizeOf (undefined :: CUShort)) name 0 sz
+    let sz = PM.sizeofByteArray name
+    when (sz < pathSize) $ do
+      PM.copyByteArray bs familySize name 0 sz
     PM.unsafeFreezeByteArray bs
 
 touchByteArray :: ByteArray -> IO ()
@@ -86,9 +102,4 @@ unboxByteArrayIO (IO f) s = case f s of
 -- runST in this module.
 runByteArrayIO :: (State## RealWorld -> (## State## RealWorld, ByteArray## ##)) -> ByteArray
 runByteArrayIO st_rep = case runRW## st_rep of (## _, a ##) -> ByteArray a
-
--- | The @SOCK_RAW@ socket type.
-raw :: Type
-raw = Type #{const SOCK_RAW}
-
 

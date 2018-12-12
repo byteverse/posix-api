@@ -51,11 +51,16 @@ module Posix.Socket
   , Domain(..)
   , Type(..)
   , Protocol(..)
+  , SendFlags(..)
+  , ReceiveFlags(..)
+    -- * Socket Address
+    -- ** Types
   , SocketAddress(..)
   , PST.SocketAddressInternet(..)
   , PST.SocketAddressUnix(..)
-  , SendFlags(..)
-  , ReceiveFlags(..)
+    -- ** Encoding
+  , PSP.encodeSocketAddressInternet
+  , PSP.encodeSocketAddressUnix
     -- * Data Construction
     -- ** Socket Families
   , PST.unix
@@ -64,6 +69,7 @@ module Posix.Socket
     -- ** Socket Types
   , PST.stream
   , PST.datagram
+  , PST.raw
   , PST.sequencedPacket
     -- ** Protocols
   , PST.defaultProtocol
@@ -86,6 +92,10 @@ import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
+
+-- This module include operating-system specific code used
+-- to serialize some of various kind of socket address types.
+import qualified Posix.Socket.Platform as PSP
 
 foreign import ccall unsafe "sys/socket.h socket"
   c_socket :: Domain -> Type -> Protocol -> IO Fd

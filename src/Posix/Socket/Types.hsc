@@ -23,6 +23,7 @@ module Posix.Socket.Types
     -- * Socket Types
   , stream
   , datagram
+  , raw
   , sequencedPacket
     -- * Protocols
   , defaultProtocol
@@ -104,7 +105,11 @@ data SocketAddressInternet6 = SocketAddressInternet6
 --   > char         sun_path[]  Socket pathname. 
 --
 --   However, the first field is omitted since it is always @AF_UNIX@.
---   It is adding during serialization.
+--   It is adding during serialization. Although @sun_path@ is a
+--   null-terminated string, @SocketAddressUnix@ should not have
+--   a trailing null byte. The conversion function @encodeSocketAddressUnix@
+--   adds the null terminator. The size of path should not equal
+--   or exceed the platform-dependent size of @sun_path@.
 newtype SocketAddressUnix = SocketAddressUnix
   { path :: ByteArray
   }
@@ -116,6 +121,16 @@ stream = Type #{const SOCK_STREAM}
 -- | The @SOCK_DGRAM@ socket type.
 datagram :: Type
 datagram = Type #{const SOCK_DGRAM}
+
+-- | The @SOCK_RAW@ socket type. POSIX declares raw sockets optional.
+--   However, they are included here for convenience. Please open an
+--   issue if this prevents this library from compiling on a
+--   POSIX-compliant operating system that anyone uses for haskell
+--   development. Keep in mind that even though raw sockets may exist
+--   on all POSIX-compliant operating systems, they may differ in
+--   their behavior.
+raw :: Type
+raw = Type #{const SOCK_RAW}
 
 -- | The @SOCK_SEQPACKET@ socket type.
 sequencedPacket :: Type
