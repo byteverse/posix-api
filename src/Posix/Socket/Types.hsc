@@ -1,8 +1,12 @@
+{-# language DataKinds #-}
 {-# language DerivingStrategies #-}
 {-# language DuplicateRecordFields #-}
+{-# language GADTSyntax #-}
 {-# language GeneralizedNewtypeDeriving #-}
+{-# language KindSignatures #-}
 
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
@@ -14,8 +18,8 @@ module Posix.Socket.Types
   , SocketAddressInternet(..)
   , SocketAddressInternet6(..)
   , SocketAddressUnix(..)
-  , SendFlags(..)
-  , ReceiveFlags(..)
+  , Flags(..)
+  , Message(..)
     -- * Socket Families
   , unix
   , unspecified
@@ -27,6 +31,12 @@ module Posix.Socket.Types
   , sequencedPacket
     -- * Protocols
   , defaultProtocol
+  , rawProtocol
+  , icmp
+  , tcp
+  , udp
+  , ip
+  , ipv6
     -- * Receive Flags
   , peek
   , outOfBand
@@ -37,6 +47,7 @@ import Foreign.C.Types (CInt(..))
 import Data.Primitive (ByteArray)
 import Data.Bits (Bits,(.|.))
 import Data.Word (Word16,Word32,Word64)
+import qualified Data.Kind
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
@@ -49,19 +60,21 @@ newtype Type = Type CInt
 
 newtype Protocol = Protocol CInt
 
-newtype SendFlags = SendFlags CInt
+-- | The direction of a message. The data constructor are only used
+--   at the type level as phantom arguments.
+data Message = Send | Receive
+
+-- | Receive flags are given by @Flags Receive@ and send flags
+--   are given by @Flags Send@. This is done because there are
+--   several flags that are applicable in either a receiving
+--   context or a sending context.
+newtype Flags :: Message -> Data.Kind.Type where
+  Flags :: CInt -> Flags m
   deriving stock (Eq)
   deriving newtype (Bits)
 
-instance Semigroup SendFlags where (<>) = (.|.)
-instance Monoid SendFlags where mempty = SendFlags 0
-
-newtype ReceiveFlags = ReceiveFlags CInt
-  deriving stock (Eq)
-  deriving newtype (Bits)
-
-instance Semigroup ReceiveFlags where (<>) = (.|.)
-instance Monoid ReceiveFlags where mempty = ReceiveFlags 0
+instance Semigroup (Flags m) where (<>) = (.|.)
+instance Monoid (Flags m) where mempty = Flags 0
 
 -- | The @sockaddr@ data. This is an extensible tagged union, so this
 --   library has chosen to represent it as byte array. It is up to
@@ -148,18 +161,43 @@ unspecified = Domain #{const AF_UNSPEC}
 internet :: Domain
 internet = Domain #{const AF_INET}
 
--- | The @MSG_PEEK@ receive flag.
-peek :: ReceiveFlags
-peek = ReceiveFlags #{const MSG_PEEK}
+-- | The @MSG_OOB@ receive flag or send flag.
+outOfBand :: Flags m
+outOfBand = Flags #{const MSG_OOB}
 
--- | The @MSG_OOB@ receive flag.
-outOfBand :: ReceiveFlags
-outOfBand = ReceiveFlags #{const MSG_OOB}
+-- | The @MSG_PEEK@ receive flag.
+peek :: Flags 'Receive
+peek = Flags #{const MSG_PEEK}
 
 -- | The @MSG_WAITALL@ receive flag.
-waitAll :: ReceiveFlags
-waitAll = ReceiveFlags #{const MSG_WAITALL}
+waitAll :: Flags 'Receive
+waitAll = Flags #{const MSG_WAITALL}
 
+-- | The default protocol for a socket type.
 defaultProtocol :: Protocol
 defaultProtocol = Protocol 0
+
+-- | The @IPPROTO_RAW@ protocol.
+rawProtocol :: Protocol
+rawProtocol = Protocol #{const IPPROTO_RAW}
+
+-- | The @IPPROTO_ICMP@ protocol.
+icmp :: Protocol
+icmp = Protocol #{const IPPROTO_ICMP}
+
+-- | The @IPPROTO_TCP@ protocol.
+tcp :: Protocol
+tcp = Protocol #{const IPPROTO_TCP}
+
+-- | The @IPPROTO_UDP@ protocol.
+udp :: Protocol
+udp = Protocol #{const IPPROTO_UDP}
+
+-- | The @IPPROTO_IP@ protocol.
+ip :: Protocol
+ip = Protocol #{const IPPROTO_IP}
+
+-- | The @IPPROTO_IPV6@ protocol.
+ipv6 :: Protocol
+ipv6 = Protocol #{const IPPROTO_IPV6}
 

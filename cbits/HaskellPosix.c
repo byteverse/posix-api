@@ -13,3 +13,9 @@ ssize_t recv_offset(int socket, char *buffer, int offset, size_t length, int fla
 ssize_t send_offset(int socket, const char *buffer, int offset, size_t length, int flags) {
   send(socket, (const void*)(buffer + offset), length, flags);
 }
+ssize_t sendto_offset(int socket, const char *message, int offset, size_t length, int flags, const struct sockaddr *dest_addr, socklen_t dest_len){
+  sendto(socket, (const void*)(message + offset), length, flags, dest_addr, dest_len);
+}
+ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict address_len) {
+  recvfrom(socket, (void*)(buffer + offset), length, flags, address, address_len);
+}

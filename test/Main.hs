@@ -14,7 +14,6 @@ import qualified GHC.Exts as E
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.MVar as PM
 import qualified Posix.Socket as S
-import qualified Posix.Socket.Types as P
 
 main :: IO ()
 main = defaultMain tests
@@ -31,7 +30,7 @@ tests = testGroup "Tests"
 
 testSocketsA :: Assertion
 testSocketsA = do
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray b 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray a sample 0 5 mempty
@@ -44,7 +43,7 @@ testSocketsB = do
   let limit = 10
       wordSz = PM.sizeOf (undefined :: Int)
       cwordSz = fromIntegral wordSz :: CSize
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
   lock <- PM.newEmptyMVar
   let go1 !(ix :: Int) !(n :: Int) = if (ix < limit)
         then do
@@ -71,7 +70,7 @@ testSocketsB = do
 
 testSocketsC :: Assertion
 testSocketsC = do
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
@@ -81,7 +80,7 @@ testSocketsC = do
 
 testSocketsD :: Assertion
 testSocketsD = do
-  (a,b) <- demand =<< S.socketPair P.unix P.datagram P.defaultProtocol
+  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
   _ <- forkIO $ do
     bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
     when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")

@@ -3,6 +3,7 @@
 {-# language DuplicateRecordFields #-}
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language MagicHash #-}
+{-# language NamedFieldPuns #-}
 {-# language UnboxedTuples #-}
 {-# language ScopedTypeVariables #-}
 
@@ -37,29 +38,25 @@ import qualified Foreign.Storable as FS
 -- | Serialize a IPv4 socket address so that it may be passed to @bind@.
 --   This serialization is operating-system dependent.
 encodeSocketAddressInternet :: SocketAddressInternet -> SocketAddress
-encodeSocketAddressInternet (SocketAddressInternet netPort netAddr) =
+encodeSocketAddressInternet (SocketAddressInternet {port, address}) =
   SocketAddress $ runByteArrayIO $ unboxByteArrayIO $ do
-    bs <- PM.newPinnedByteArray #{size struct sockaddr}
+    bs <- PM.newPinnedByteArray #{size struct sockaddr_in}
     -- Initialize the bytearray by filling it with zeroes to ensure
     -- that the sin_zero padding that linux expects is properly zeroed.
-    -- Notice that the size of the byte array is the size of sockaddr,
-    -- not the size of sockaddr_in.
-    PM.setByteArray bs 0 #{size struct sockaddr} (0 :: Word8)
+    PM.setByteArray bs 0 #{size struct sockaddr_in} (0 :: Word8)
     let !(Addr addr) = PM.mutableByteArrayContents bs
     let !(ptr :: Ptr Void) = Ptr addr
     -- ATM: I cannot find a way to poke AF_INET into the socket address
     -- without hardcoding the expected length (CUShort). There may be
     -- a way to use hsc2hs to convert a size to a haskell type, but
     -- I am not sure of how to do this. At any rate, I do not expect
-    -- that linux will ever change to bit size of sa_family_t, so I
+    -- that linux will ever change the bit size of sa_family_t, so I
     -- am not too concerned.
     #{poke struct sockaddr_in, sin_family} ptr (#{const AF_INET} :: CUShort)
-    -- TODO: the port and the address are supposed to be in network
-    -- byte order. Figure out where we want this conversion to
-    -- take place. I think that "in the data type" is the right
-    -- answer though.
-    #{poke struct sockaddr_in, sin_port} ptr netPort
-    #{poke struct sockaddr_in, sin_addr} ptr netAddr
+    -- The port and the address are already supposed to be in network
+    -- byte order in the SocketAddressInternet data type.
+    #{poke struct sockaddr_in, sin_port} ptr port
+    #{poke struct sockaddr_in, sin_addr.s_addr} ptr address
     r <- PM.unsafeFreezeByteArray bs
     touchByteArray r
     pure r
@@ -82,7 +79,7 @@ encodeSocketAddressUnix (SocketAddressUnix !name) =
     let familySize = FS.sizeOf (undefined :: CUShort)
     bs <- PM.newPinnedByteArray (pathSize + familySize)
     PM.setByteArray bs familySize pathSize (0 :: Word8)
-    PM.writeByteArray bs 0 (#{const AF_INET} :: CUShort)
+    PM.writeByteArray bs 0 (#{const AF_UNIX} :: CUShort)
     let sz = PM.sizeofByteArray name
     when (sz < pathSize) $ do
       PM.copyByteArray bs familySize name 0 sz

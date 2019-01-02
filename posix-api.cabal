@@ -71,9 +71,11 @@ extra-source-files:
 
 library
   exposed-modules:
+    Linux.Socket
     Posix.Directory
     Posix.Socket
   other-modules:
+    Linux.Socket.Types
     Posix.Socket.Types
     Posix.Socket.Platform
   build-depends:
@@ -87,6 +89,7 @@ library
   c-sources: cbits/HaskellPosix.c
   include-dirs: include
   includes: HaskellPosix.h
+  build-tools: hsc2hs
 
 test-suite test
   type: exitcode-stdio-1.0
@@ -94,7 +97,7 @@ test-suite test
   main-is: Main.hs
   build-depends:
     , base
-    , posix
+    , posix-api
     , tasty
     , tasty-hunit
     , primitive
