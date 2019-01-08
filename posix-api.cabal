@@ -65,6 +65,7 @@ copyright: 2018 Andrew Martin
 category: System
 build-type: Simple
 extra-source-files:
+  README.md
   CHANGELOG.md
   cbits/HaskellPosix.c
   include/HaskellPosix.h
