@@ -5,6 +5,10 @@
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language KindSignatures #-}
 
+-- This is needed because hsc2hs does not currently handle ticked
+-- promoted data constructors correctly.
+{-# OPTIONS_GHC -fno-warn-unticked-promoted-constructors #-}
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -14,16 +18,21 @@ module Posix.Socket.Types
   ( Domain(..)
   , Type(..)
   , Protocol(..)
+  , Level(..)
+  , OptionName(..)
+  , OptionValue(..)
   , SocketAddress(..)
   , SocketAddressInternet(..)
   , SocketAddressInternet6(..)
   , SocketAddressUnix(..)
-  , Flags(..)
+  , MessageFlags(..)
   , Message(..)
+  , ShutdownType(..)
     -- * Socket Families
   , unix
   , unspecified
   , internet
+  , internet6
     -- * Socket Types
   , stream
   , datagram
@@ -41,12 +50,23 @@ module Posix.Socket.Types
   , peek
   , outOfBand
   , waitAll
+    -- * Shutdown Types
+  , read
+  , write
+  , readWrite
+    -- * Socket Levels
+  , levelSocket
+    -- * Option Names
+  , optionError
   ) where
 
-import Foreign.C.Types (CInt(..))
-import Data.Primitive (ByteArray)
+import Prelude hiding (read)
+
 import Data.Bits (Bits,(.|.))
+import Data.Primitive (ByteArray)
 import Data.Word (Word16,Word32,Word64)
+import Foreign.C.Types (CInt(..))
+
 import qualified Data.Kind
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
@@ -60,28 +80,36 @@ newtype Type = Type CInt
 
 newtype Protocol = Protocol CInt
 
+newtype Level = Level CInt
+
+newtype OptionName = OptionName CInt
+
+-- | Which end of the socket to shutdown.
+newtype ShutdownType = ShutdownType CInt
+
 -- | The direction of a message. The data constructor are only used
 --   at the type level as phantom arguments.
 data Message = Send | Receive
 
--- | Receive flags are given by @Flags Receive@ and send flags
---   are given by @Flags Send@. This is done because there are
+-- | Receive flags are given by @MessageFlags Receive@ and send flags
+--   are given by @MessageFlags Send@. This is done because there are
 --   several flags that are applicable in either a receiving
 --   context or a sending context.
-newtype Flags :: Message -> Data.Kind.Type where
-  Flags :: CInt -> Flags m
+newtype MessageFlags :: Message -> Data.Kind.Type where
+  MessageFlags :: CInt -> MessageFlags m
   deriving stock (Eq)
   deriving newtype (Bits)
 
-instance Semigroup (Flags m) where (<>) = (.|.)
-instance Monoid (Flags m) where mempty = Flags 0
+instance Semigroup (MessageFlags m) where (<>) = (.|.)
+instance Monoid (MessageFlags m) where mempty = MessageFlags 0
 
--- | The @sockaddr@ data. This is an extensible tagged union, so this
---   library has chosen to represent it as byte array. It is up to
---   platform-specific libraries to inhabit this type with values.
---   The byte array representing the socket address must be pinned
---   since @bind@ uses a safe FFI call.
+-- | The @sockaddr@ data. This is an extensible tagged union, so this library
+--   has chosen to represent it as byte array. It is up to platform-specific
+--   libraries to inhabit this type with values.
 newtype SocketAddress = SocketAddress ByteArray
+
+-- | The @option_value@ data.
+newtype OptionValue = OptionValue ByteArray
 
 -- | An address for an Internet socket over IPv4. The
 --   <http://pubs.opengroup.org/onlinepubs/000095399/basedefs/netinet/in.h.html POSIX specification>
@@ -161,17 +189,25 @@ unspecified = Domain #{const AF_UNSPEC}
 internet :: Domain
 internet = Domain #{const AF_INET}
 
+-- | The @AF_INET6@ communications domain. POSIX declares raw sockets
+--   optional. However, they are included here for convenience. Please
+--   open an issue if this prevents this library from compiling on a
+--   POSIX-compliant operating system that anyone uses for haskell
+--   development.
+internet6 :: Domain
+internet6 = Domain #{const AF_INET6}
+
 -- | The @MSG_OOB@ receive flag or send flag.
-outOfBand :: Flags m
-outOfBand = Flags #{const MSG_OOB}
+outOfBand :: MessageFlags m
+outOfBand = MessageFlags #{const MSG_OOB}
 
 -- | The @MSG_PEEK@ receive flag.
-peek :: Flags 'Receive
-peek = Flags #{const MSG_PEEK}
+peek :: MessageFlags Receive
+peek = MessageFlags #{const MSG_PEEK}
 
 -- | The @MSG_WAITALL@ receive flag.
-waitAll :: Flags 'Receive
-waitAll = Flags #{const MSG_WAITALL}
+waitAll :: MessageFlags Receive
+waitAll = MessageFlags #{const MSG_WAITALL}
 
 -- | The default protocol for a socket type.
 defaultProtocol :: Protocol
@@ -200,4 +236,24 @@ ip = Protocol #{const IPPROTO_IP}
 -- | The @IPPROTO_IPV6@ protocol.
 ipv6 :: Protocol
 ipv6 = Protocol #{const IPPROTO_IPV6}
+
+-- | Disable further receive operations (e.g. @SHUT_RD@)
+read :: ShutdownType
+read = ShutdownType #{const SHUT_RD}
+
+-- | Disable further send operations (e.g. @SHUT_WR@)
+write :: ShutdownType
+write = ShutdownType #{const SHUT_WR}
+
+-- | Disable further send operations (e.g. @SHUT_RDWR@)
+readWrite :: ShutdownType
+readWrite = ShutdownType #{const SHUT_RDWR}
+
+-- | Socket error status (e.g. @SOL_SOCKET@)
+levelSocket :: Level
+levelSocket = Level #{const SOL_SOCKET}
+
+-- | Socket error status (e.g. @SO_ERROR@)
+optionError :: OptionName
+optionError = OptionName #{const SO_ERROR}
 

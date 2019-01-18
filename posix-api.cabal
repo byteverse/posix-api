@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: posix-api
-version: 0.1.0.0
+version: 0.2.0.0
 synopsis: posix bindings
 description:
   This library provides a very thin wrapper around POSIX APIs. It can be
@@ -69,6 +69,7 @@ extra-source-files:
   CHANGELOG.md
   cbits/HaskellPosix.c
   include/HaskellPosix.h
+  include/custom.h
 
 library
   exposed-modules:

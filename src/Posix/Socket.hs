@@ -1,6 +1,5 @@
 {-# language BangPatterns #-}
 {-# language DataKinds #-}
-{-# language InterruptibleFFI #-}
 {-# language MagicHash #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnboxedTuples #-}
@@ -18,47 +17,69 @@
 --     buffer type. They all call @send@ or @recv@ exactly once. They do not
 --     repeatedly make syscalls like some of the functions in @network@.
 --     Users who want that behavior need to build on top of this package.
+--   * There are no requirements on the pinnedness of @ByteArray@ arguments
+--     passed to any of these functions. If wrappers of the safe FFI are
+--     passed unpinned @ByteArray@ arguments, they will copy the contents
+--     into pinned memory before invoking the foreign function.
 module Posix.Socket
   ( -- * Functions
     -- ** Socket
-    socket
+    uninterruptibleSocket
     -- ** Socket Pair
-  , socketPair
+  , uninterruptibleSocketPair
     -- ** Bind
-  , bind
+  , uninterruptibleBind
     -- ** Connect
   , connect
+  , uninterruptibleConnect
     -- ** Listen
-  , listen
+  , uninterruptibleListen
     -- ** Accept
   , accept
+  , uninterruptibleAccept
   , accept_
+    -- ** Get Socket Name
+  , uninterruptibleGetSocketName
+    -- ** Get Socket Option
+  , uninterruptibleGetSocketOption
     -- ** Close
   , close
-  , unsafeClose
+  , uninterruptibleClose
+    -- ** Shutdown
+  , uninterruptibleShutdown
     -- ** Send
   , send
   , sendByteArray
   , sendMutableByteArray
-  , unsafeSend
-  , unsafeSendByteArray
-  , unsafeSendMutableByteArray
+  , uninterruptibleSend
+  , uninterruptibleSendByteArray
+  , uninterruptibleSendMutableByteArray
     -- ** Send To
-  , unsafeSendToByteArray
-  , unsafeSendToMutableByteArray
+  , uninterruptibleSendToByteArray
+  , uninterruptibleSendToMutableByteArray
     -- ** Receive
   , receive
   , receiveByteArray
-  , unsafeReceive
-  , unsafeReceiveMutableByteArray
+  , uninterruptibleReceive
+  , uninterruptibleReceiveMutableByteArray
     -- ** Receive From
-  , unsafeReceiveFromMutableByteArray
-  , unsafeReceiveFromMutableByteArray_
+  , uninterruptibleReceiveFromMutableByteArray
+  , uninterruptibleReceiveFromMutableByteArray_
+    -- ** Byte-Order Conversion
+    -- $conversion
+  , hostToNetworkLong
+  , hostToNetworkShort
+  , networkToHostLong
+  , networkToHostShort
     -- * Types
   , Domain(..)
   , Type(..)
   , Protocol(..)
-  , Flags(..)
+  , OptionName(..)
+  , OptionValue(..)
+  , Level(..)
+  , MessageFlags(..)
+  , ShutdownType(..)
     -- * Socket Address
     -- ** Types
   , SocketAddress(..)
@@ -67,11 +88,16 @@ module Posix.Socket
     -- ** Encoding
   , PSP.encodeSocketAddressInternet
   , PSP.encodeSocketAddressUnix
+    -- ** Decoding
+  , PSP.decodeSocketAddressInternet
+    -- ** Sizes
+  , PSP.sizeofSocketAddressInternet
     -- * Data Construction
     -- ** Socket Domains
   , PST.unix
   , PST.unspecified
   , PST.internet
+  , PST.internet6
     -- ** Socket Types
   , PST.stream
   , PST.datagram
@@ -89,21 +115,34 @@ module Posix.Socket
   , PST.peek
   , PST.outOfBand
   , PST.waitAll
+    -- ** Shutdown Types
+  , PST.read
+  , PST.write
+  , PST.readWrite
+    -- ** Socket Levels
+  , PST.levelSocket
+    -- ** Option Names
+  , PST.optionError
   ) where
 
+import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#)
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,Int(I#))
+import GHC.Exts (shrinkMutableByteArray#)
 import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
-import Posix.Socket.Types (Flags(..),Message(..))
+import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
+import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
+import qualified Control.Monad.Primitive as PM
 
 -- This module include operating-system specific code used
 -- to serialize some of various kind of socket address types.
@@ -118,11 +157,14 @@ foreign import ccall unsafe "sys/socket.h socketpair"
 foreign import ccall unsafe "sys/socket.h listen"
   c_listen :: Fd -> CInt -> IO CInt
 
-foreign import ccall interruptible "unistd.h close"
+foreign import ccall safe "unistd.h close"
   c_safe_close :: Fd -> IO CInt
 
 foreign import ccall unsafe "unistd.h close"
   c_unsafe_close :: Fd -> IO CInt
+
+foreign import ccall unsafe "unistd.h shutdown"
+  c_unsafe_shutdown :: Fd -> ShutdownType -> IO CInt
 
 -- Per the spec, the type signature of bind is:
 --   int bind(int socket, const struct sockaddr *address, socklen_t address_len);
@@ -141,19 +183,44 @@ foreign import ccall unsafe "sys/socket.h bind"
 -- note on c_bind for why we use CInt for socklen_t. Remember that the
 -- first bytearray argument is actually SocketAddress in the function that
 -- wraps this one. The second bytearray argument is a pointer to the size.
-foreign import ccall interruptible "sys/socket.h accept"
+foreign import ccall safe "sys/socket.h accept"
   c_safe_accept :: Fd
                 -> MutableByteArray# RealWorld -- SocketAddress
                 -> MutableByteArray# RealWorld -- Ptr CInt
                 -> IO Fd
-foreign import ccall interruptible "sys/socket.h accept"
+foreign import ccall unsafe "sys/socket.h accept"
+  c_unsafe_accept :: Fd
+                  -> MutableByteArray# RealWorld -- SocketAddress
+                  -> MutableByteArray# RealWorld -- Ptr CInt
+                  -> IO Fd
+-- This variant of accept is used when we do not care about the
+-- remote sockaddr. We pass null.
+foreign import ccall safe "sys/socket.h accept"
   c_safe_ptr_accept :: Fd -> Ptr Void -> Ptr CInt -> IO Fd
+
+foreign import ccall unsafe "sys/socket.h getsockname"
+  c_unsafe_getsockname :: Fd
+                       -> MutableByteArray# RealWorld -- SocketAddress
+                       -> MutableByteArray# RealWorld -- Addr length (Ptr CInt)
+                       -> IO CInt
+
+foreign import ccall unsafe "sys/socket.h getsockopt"
+  c_unsafe_getsockopt :: Fd
+                      -> Level
+                      -> OptionName
+                      -> MutableByteArray# RealWorld -- Option value
+                      -> MutableByteArray# RealWorld -- Option len (Ptr CInt)
+                      -> IO CInt
 
 -- Per the spec the type signature of connect is:
 --   int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 -- The bytearray argument is actually SocketAddress.
-foreign import ccall interruptible "sys/socket.h connect"
+foreign import ccall safe "sys/socket.h connect"
   c_safe_connect :: Fd -> ByteArray# -> CInt -> IO CInt
+foreign import ccall safe "sys/socket.h connect"
+  c_safe_mutablebytearray_connect :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CInt
+foreign import ccall unsafe "sys/socket.h connect"
+  c_unsafe_connect :: Fd -> ByteArray# -> CInt -> IO CInt
 
 -- There are several options for wrapping send. Both safe and unsafe
 -- are useful. Additionally, in the unsafe category, we also
@@ -162,65 +229,67 @@ foreign import ccall interruptible "sys/socket.h connect"
 -- while the FFI call is taking place. Safe FFI calls do not have
 -- this guarantee, so internally we must be careful when using these to only
 -- provide pinned byte arrays as arguments.
-foreign import ccall interruptible "sys/socket.h send"
-  c_safe_addr_send :: Fd -> Addr# -> CSize -> Flags 'Send -> IO CSsize
-foreign import ccall interruptible "sys/socket.h send_offset"
-  c_safe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> Flags 'Send -> IO CSsize
-foreign import ccall interruptible "sys/socket.h send_offset"
-  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Send -> IO CSsize
-foreign import ccall interruptible "sys/socket.h send"
-  c_safe_mutablebytearray_no_offset_send :: Fd -> MutableByteArray# RealWorld -> CSize -> Flags 'Send -> IO CSsize
+foreign import ccall safe "sys/socket.h send"
+  c_safe_addr_send :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
+foreign import ccall safe "sys/socket.h send_offset"
+  c_safe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+foreign import ccall safe "sys/socket.h send_offset"
+  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+foreign import ccall safe "sys/socket.h send"
+  c_safe_mutablebytearray_no_offset_send :: Fd -> MutableByteArray# RealWorld -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
-  c_unsafe_addr_send :: Fd -> Addr# -> CSize -> Flags 'Send -> IO CSsize
+  c_unsafe_addr_send :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send_offset"
-  c_unsafe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> Flags 'Send -> IO CSsize
+  c_unsafe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send_offset"
-  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Send -> IO CSsize
+  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
 
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
-  c_unsafe_bytearray_sendto :: Fd -> ByteArray# -> CInt -> CSize -> Flags 'Send -> ByteArray# -> CInt -> IO CSsize
+  c_unsafe_bytearray_sendto :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
-  c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Send -> ByteArray# -> CInt -> IO CSsize
+  c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
 
 -- There are several ways to wrap recv.
-foreign import ccall interruptible "sys/socket.h recv"
-  c_safe_addr_recv :: Fd -> Addr# -> CSize -> Flags 'Receive -> IO CSsize
+foreign import ccall safe "sys/socket.h recv"
+  c_safe_addr_recv :: Fd -> Addr# -> CSize -> MessageFlags 'Receive -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recv"
-  c_unsafe_addr_recv :: Fd -> Addr# -> CSize -> Flags 'Receive -> IO CSsize
+  c_unsafe_addr_recv :: Fd -> Addr# -> CSize -> MessageFlags 'Receive -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recv_offset"
-  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Receive -> IO CSsize
+  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> IO CSsize
 
 -- The last two arguments are SocketAddress and Ptr CInt.
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
-  c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
+  c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
-  c_unsafe_mutable_byte_array_ptr_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> Flags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
+  c_unsafe_mutable_byte_array_ptr_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
 
 -- | Create an endpoint for communication, returning a file
 --   descriptor that refers to that endpoint. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/socket.html POSIX specification>
---   includes more details. This is implemented as an unsafe FFI
---   call since the author believes that it cannot block indefinitely.
-socket ::
+--   includes more details. No special preparation is required before calling
+--   this function. The author believes that it cannot block for a prolonged
+--   period of time.
+uninterruptibleSocket ::
      Domain -- ^ Communications domain (e.g. 'internet', 'unix')
-  -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
   -> Protocol -- ^ Protocol
   -> IO (Either Errno Fd)
-socket dom typ prot = c_socket dom typ prot >>= errorsFromFd
+uninterruptibleSocket dom typ prot = c_socket dom typ prot >>= errorsFromFd
 
 -- | Create an unbound pair of connected sockets in a specified domain, of
 --   a specified type, under the protocol optionally specified by the protocol
 --   argument. The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/socketpair.html POSIX specification>
---   includes more details. This is implemented as an unsafe FFI call
---   since the author believes that it cannot block indefinitely.
-socketPair ::
+--   includes more details. No special preparation is required before calling
+--   this function. The author believes that it cannot block for a prolonged
+--   period of time.
+uninterruptibleSocketPair ::
      Domain -- ^ Communications domain (probably 'unix')
-  -> Type -- ^ Socket type (e.g. 'datagram', 'stream')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
   -> Protocol -- ^ Protocol
   -> IO (Either Errno (Fd,Fd))
-socketPair dom typ prot = do
+uninterruptibleSocketPair dom typ prot = do
   -- If this ever switches to the safe FFI, we will need to use
   -- a pinned array here instead.
   (sockets@(MutablePrimArray sockets#) :: MutablePrimArray RealWorld Fd) <- PM.newPrimArray 2
@@ -237,37 +306,54 @@ socketPair dom typ prot = do
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/bind.html POSIX specification>
 --   includes more details. The 'SocketAddress' represents the @sockaddr@ pointer argument, together
 --   with its @socklen_t@ size, as a byte array. This allows @bind@ to
---   be used with @sockaddr@ extensions on various platforms. This uses
---   the unsafe FFI since the author believes it cannot block indefinitely.
-bind ::
+--   be used with @sockaddr@ extensions on various platforms. No special
+--   preparation is required before calling this function. The author
+--   believes that it cannot block for a prolonged period of time.
+uninterruptibleBind ::
      Fd -- ^ Socket
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
-bind fd (SocketAddress b@(ByteArray b#)) =
+uninterruptibleBind fd (SocketAddress b@(ByteArray b#)) =
   c_bind fd b# (intToCInt (PM.sizeofByteArray b)) >>= errorsFromInt
 
 -- | Mark the socket as a passive socket, that is, as a socket that
 --   will be used to accept incoming connection requests using @accept@.
 --   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/listen.html POSIX specification>
---   includes more details. Listen uses the unsafe FFI since it cannot block
---   and always returns promptly.
-listen ::
+--   includes more details. No special preparation is required before
+--   calling this function. The author believes that it cannot block
+--   for a prolonged period of time.
+uninterruptibleListen ::
      Fd -- ^ Socket
   -> CInt -- ^ Backlog
   -> IO (Either Errno ())
-listen fd backlog = c_listen fd backlog >>= errorsFromInt
+uninterruptibleListen fd backlog = c_listen fd backlog >>= errorsFromInt
 
 -- | Connect the socket to the specified socket address.
 --   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
---   includes more details. An @unsafeConnect@ using the unsafe FFI is
---   not provided since there is no way to hook such a beast into the
---   event manager.
+--   includes more details.
 connect ::
      Fd -- ^ Fd
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
 connect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
-  c_safe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
+  case PM.isByteArrayPinned sockAddr of
+    True -> c_safe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
+    False -> do
+      let len = PM.sizeofByteArray sockAddr
+      x@(MutableByteArray x#) <- PM.newPinnedByteArray len
+      PM.copyByteArray x 0 sockAddr 0 len
+      c_safe_mutablebytearray_connect fd x# (intToCInt len) >>= errorsFromInt
+
+-- | Connect the socket to the specified socket address.
+--   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
+--   includes more details. The only sensible way to use this is to
+--   give a nonblocking socket as the argument.
+uninterruptibleConnect ::
+     Fd -- ^ Fd
+  -> SocketAddress -- ^ Socket address, extensible tagged union
+  -> IO (Either Errno ())
+uninterruptibleConnect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
+  c_unsafe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
 
 -- | Extract the first connection on the queue of pending connections. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
@@ -297,8 +383,8 @@ connect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
 accept ::
      Fd -- ^ Listening socket
   -> CInt -- ^ Maximum socket address size
-  -> IO (Either Errno (SocketAddress,Fd)) -- ^ Peer information and connected socket
-accept sock maxSz = do
+  -> IO (Either Errno (CInt,SocketAddress,Fd)) -- ^ Peer information and connected socket
+accept !sock !maxSz = do
   sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newPinnedByteArray (cintToInt maxSz)
   lenBuf@(MutableByteArray lenBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: CInt))
   PM.writeByteArray lenBuf 0 maxSz
@@ -306,8 +392,36 @@ accept sock maxSz = do
   if r > (-1)
     then do
       (sz :: CInt) <- PM.readByteArray lenBuf 0
-      sockAddr <- PM.unsafeFreezeByteArray =<< PM.resizeMutableByteArray sockAddrBuf (cintToInt sz)
-      pure (Right (SocketAddress sockAddr,r))
+      -- Why copy when we could just shrink? We want to always return
+      -- byte arrays that are not explicitly pinned.
+      let minSz = min sz maxSz
+      x <- PM.newByteArray (cintToInt minSz)
+      PM.copyMutableByteArray x 0 sockAddrBuf 0 (cintToInt minSz)
+      sockAddr <- PM.unsafeFreezeByteArray x
+      -- sockAddr <- PM.unsafeFreezeByteArray =<< PM.resizeMutableByteArray sockAddrBuf (cintToInt sz)
+      pure (Right (sz,SocketAddress sockAddr,r))
+    else fmap Left getErrno
+
+-- | See 'accept'. This uses the unsafe FFI. Consequently, it does not
+--   not need to allocate pinned memory. It only makes sense to call this
+--   on a nonblocking socket.
+uninterruptibleAccept ::
+     Fd -- ^ Listening socket
+  -> CInt -- ^ Maximum socket address size
+  -> IO (Either Errno (CInt,SocketAddress,Fd)) -- ^ Peer information and connected socket
+uninterruptibleAccept !sock !maxSz = do
+  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
+  PM.writeByteArray lenBuf 0 maxSz
+  r <- c_unsafe_accept sock sockAddrBuf# lenBuf#
+  if r > (-1)
+    then do
+      (sz :: CInt) <- PM.readByteArray lenBuf 0
+      if sz < maxSz
+        then shrinkMutableByteArray sockAddrBuf (cintToInt sz)
+        else pure ()
+      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
+      pure (Right (sz,SocketAddress sockAddr,r))
     else fmap Left getErrno
 
 -- | A variant of 'accept' that does not provide the user with a
@@ -318,9 +432,57 @@ accept_ ::
 accept_ sock =
   c_safe_ptr_accept sock nullPtr nullPtr >>= errorsFromFd
 
+-- | Retrieve the locally-bound name of the specified socket. The
+--   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
+--   of @getsockname@ includes more details.
+uninterruptibleGetSocketName ::
+     Fd -- ^ Socket
+  -> CInt -- ^ Maximum socket address size
+  -> IO (Either Errno (CInt,SocketAddress))
+uninterruptibleGetSocketName sock maxSz = do
+  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
+  PM.writeByteArray lenBuf 0 maxSz
+  r <- c_unsafe_getsockname sock sockAddrBuf# lenBuf#
+  if r == 0
+    then do
+      (sz :: CInt) <- PM.readByteArray lenBuf 0
+      if sz < maxSz
+        then shrinkMutableByteArray sockAddrBuf (cintToInt sz)
+        else pure ()
+      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
+      pure (Right (sz,SocketAddress sockAddr))
+    else fmap Left getErrno
+
+-- | Retrieve the value for the option specified by the 'Option' argument for
+--   the socket specified by the 'Fd' argument. The
+--   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/getsockopt.html POSIX specification>
+--   of @getsockopt@ includes more details.
+uninterruptibleGetSocketOption ::
+     Fd -- ^ Socket
+  -> Level -- ^ Socket level
+  -> OptionName -- Option name
+  -> CInt -- ^ Maximum option value size
+  -> IO (Either Errno (CInt,OptionValue))
+uninterruptibleGetSocketOption sock level optName maxSz = do
+  valueBuf@(MutableByteArray valueBuf#) <- PM.newByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
+  PM.writeByteArray lenBuf 0 maxSz
+  r <- c_unsafe_getsockopt sock level optName valueBuf# lenBuf#
+  if r == 0
+    then do
+      (sz :: CInt) <- PM.readByteArray lenBuf 0
+      if sz < maxSz
+        then shrinkMutableByteArray valueBuf (cintToInt sz)
+        else pure ()
+      value <- PM.unsafeFreezeByteArray valueBuf
+      pure (Right (sz,OptionValue value))
+    else fmap Left getErrno
+
+
 -- | Send data from a byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are
---   actually present in the array. Since this uses the safe interruptible
+--   actually present in the array. Since this uses the safe
 --   FFI, it allocates a pinned copy of the bytearry if it was not
 --   already pinned.
 sendByteArray ::
@@ -328,7 +490,7 @@ sendByteArray ::
   -> ByteArray -- ^ Source byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
   then errorsFromSize =<< c_safe_bytearray_send fd b# off len flags
@@ -339,7 +501,7 @@ sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
 
 -- | Send data from a mutable byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are
---   actually present in the array. Since this uses the safe interruptible
+--   actually present in the array. Since this uses the safe
 --   FFI, it allocates a pinned copy of the bytearry if it was not
 --   already pinned.
 sendMutableByteArray ::
@@ -347,7 +509,7 @@ sendMutableByteArray ::
   -> MutableByteArray RealWorld -- ^ Source byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if PM.isMutableByteArrayPinned b
   then errorsFromSize =<< c_safe_mutablebytearray_send fd b# off len flags
@@ -357,13 +519,13 @@ sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if PM.isMutableB
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
 -- | Send data from an address over a network socket. This is not guaranteed
---   to send the entire length. This uses the safe interruptible FFI since
+--   to send the entire length. This uses the safe FFI since
 --   it may block indefinitely.
 send ::
      Fd -- ^ Connected socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 send fd (Addr addr) len flags =
   c_safe_addr_send fd addr len flags >>= errorsFromSize
@@ -373,41 +535,41 @@ send fd (Addr addr) len flags =
 --   from blocking. On Linux this is accomplished with @O_NONBLOCK@. It is
 --   often desirable to call 'threadWaitWrite' on a nonblocking socket before
 --   calling @unsafeSend@ on it.
-unsafeSend ::
+uninterruptibleSend ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-unsafeSend fd (Addr addr) len flags =
+uninterruptibleSend fd (Addr addr) len flags =
   c_unsafe_addr_send fd addr len flags >>= errorsFromSize
 
 -- | Send data from a byte array over a network socket. This uses the unsafe FFI;
 --   considerations pertaining to 'sendUnsafe' apply to this function as well. Users
 --   may specify a length to send fewer bytes than are actually present in the
 --   array.
-unsafeSendByteArray ::
+uninterruptibleSendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-unsafeSendByteArray fd (ByteArray b) off len flags =
+uninterruptibleSendByteArray fd (ByteArray b) off len flags =
   c_unsafe_bytearray_send fd b off len flags >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. This uses the unsafe FFI;
 --   considerations pertaining to 'sendUnsafe' apply to this function as well. Users
 --   specify an offset and a length to send fewer bytes than are actually present in the
 --   array.
-unsafeSendMutableByteArray ::
+uninterruptibleSendMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source mutable byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-unsafeSendMutableByteArray fd (MutableByteArray b) off len flags =
+uninterruptibleSendMutableByteArray fd (MutableByteArray b) off len flags =
   c_unsafe_mutable_bytearray_send fd b off len flags >>= errorsFromSize
 
 -- | Send data from a byte array over an unconnected network socket.
@@ -415,15 +577,15 @@ unsafeSendMutableByteArray fd (MutableByteArray b) off len flags =
 --   apply to this function as well. The offset and length arguments
 --   cause a slice of the byte array to be sent rather than the entire
 --   byte array.
-unsafeSendToByteArray :: 
+uninterruptibleSendToByteArray :: 
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> SocketAddress -- ^ Socket Address
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-unsafeSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
+uninterruptibleSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
   c_unsafe_bytearray_sendto fd b off len flags a# (intToCInt (PM.sizeofByteArray a)) >>= errorsFromSize
 
 -- | Send data from a mutable byte array over an unconnected network socket.
@@ -431,38 +593,38 @@ unsafeSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(ByteArray
 --   apply to this function as well. The offset and length arguments
 --   cause a slice of the mutable byte array to be sent rather than the entire
 --   byte array.
-unsafeSendToMutableByteArray :: 
+uninterruptibleSendToMutableByteArray :: 
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source byte array
   -> CInt -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
-  -> Flags 'Send -- ^ Flags
+  -> MessageFlags 'Send -- ^ Flags
   -> SocketAddress -- ^ Socket Address
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-unsafeSendToMutableByteArray fd (MutableByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
+uninterruptibleSendToMutableByteArray fd (MutableByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
   c_unsafe_mutable_bytearray_sendto fd b off len flags a# (intToCInt (PM.sizeofByteArray a)) >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This wraps @recv@ using
---   the safe interruptible FFI. When the returned size is zero, there are no
+--   the safe FFI. When the returned size is zero, there are no
 --   additional bytes to receive and the peer has performed an orderly shutdown.
 receive ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize)
 receive fd (Addr addr) len flags =
   c_safe_addr_recv fd addr len flags >>= errorsFromSize
 
 -- | Receive data into a byte array from a network socket. This wraps @recv@ using
---   the safe interruptible FFI. When the returned size is zero, there are no
+--   the safe FFI. When the returned size is zero, there are no
 --   additional bytes to receive and the peer has performed an orderly shutdown.
 receiveByteArray ::
      Fd -- ^ Socket
   -> CSize -- ^ Length in bytes
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno ByteArray)
-receiveByteArray fd len flags = do
+receiveByteArray !fd !len !flags = do
   m <- PM.newPinnedByteArray (csizeToInt len)
   let !(Addr addr) = PM.mutableByteArrayContents m
   r <- c_safe_addr_recv fd addr len flags
@@ -483,66 +645,75 @@ receiveByteArray fd len flags = do
 --   the @MSG_DONTWAIT@ flag and handling the resulting @EAGAIN@ or
 --   @EWOULDBLOCK@. When the returned size is zero, there are no additional
 --   bytes to receive and the peer has performed an orderly shutdown.
-unsafeReceive ::
+uninterruptibleReceive ::
      Fd -- ^ Socket
   -> Addr -- ^ Source address
   -> CSize -- ^ Length in bytes
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize)
-unsafeReceive fd (Addr addr) len flags =
+uninterruptibleReceive !fd (Addr !addr) !len !flags =
   c_unsafe_addr_recv fd addr len flags >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This uses the unsafe
 --   FFI; considerations pertaining to 'receiveUnsafe' apply to this function
 --   as well. Users may specify a length to receive fewer bytes than are
 --   actually present in the mutable byte array.
-unsafeReceiveMutableByteArray ::
+uninterruptibleReceiveMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
   -> CInt -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Bytes received into array
-unsafeReceiveMutableByteArray fd (MutableByteArray b) off len flags =
+uninterruptibleReceiveMutableByteArray !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_recv fd b off len flags >>= errorsFromSize
 
--- | Receive data into an address from an unconnected network socket. This uses the unsafe
---   FFI. Users may specify an offset into the destination byte array.
-unsafeReceiveFromMutableByteArray ::
+-- | Receive data into an address from an unconnected network socket. This
+--   uses the unsafe FFI. Users may specify an offset into the destination
+--   byte array. This function does not resize the buffer.
+uninterruptibleReceiveFromMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
   -> CInt -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> CInt -- ^ Maximum socket address size
-  -> IO (Either Errno (SocketAddress,CSize)) -- ^ Remote host, umber of bytes received into array
-unsafeReceiveFromMutableByteArray fd (MutableByteArray b) off len flags maxSz = do
-  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newPinnedByteArray (cintToInt maxSz)
-  lenBuf@(MutableByteArray lenBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: CInt))
+  -> IO (Either Errno (CInt,SocketAddress,CSize))
+     -- ^ Remote host, bytes received into array, bytes needed for @addrlen@.
+{-# INLINE uninterruptibleReceiveFromMutableByteArray #-}
+-- GHC does not inline this unless we give it the pragma. We really
+-- want this to inline since inlining typically avoids the Left/Right
+-- data constructor allocation.
+uninterruptibleReceiveFromMutableByteArray !fd (MutableByteArray !b) !off !len !flags !maxSz = do
+  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
   PM.writeByteArray lenBuf 0 maxSz
   r <- c_unsafe_mutable_byte_array_recvfrom fd b off len flags sockAddrBuf# lenBuf#
   if r > (-1)
     then do
       (sz :: CInt) <- PM.readByteArray lenBuf 0
-      sockAddr <- PM.unsafeFreezeByteArray =<< PM.resizeMutableByteArray sockAddrBuf (cintToInt sz)
-      pure (Right (SocketAddress sockAddr,cssizeToCSize r))
+      if sz < maxSz
+        then shrinkMutableByteArray sockAddrBuf (cintToInt sz)
+        else pure ()
+      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
+      pure (Right (sz,SocketAddress sockAddr,cssizeToCSize r))
     else fmap Left getErrno
 
 -- | Receive data into an address from a network socket. This uses the unsafe
 --   FFI. This does not return the socket address of the remote host that
 --   sent the packet received.
-unsafeReceiveFromMutableByteArray_ ::
+uninterruptibleReceiveFromMutableByteArray_ ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
   -> CInt -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
-  -> Flags 'Receive -- ^ Flags
+  -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes received into array
-unsafeReceiveFromMutableByteArray_ fd (MutableByteArray b) off len flags =
+uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
 
 -- | Close a socket. The <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>
---   includes more details. This uses the safe interruptible FFI.
+--   includes more details. This uses the safe FFI.
 close ::
      Fd -- ^ Socket
   -> IO (Either Errno ())
@@ -555,10 +726,18 @@ close fd = c_safe_close fd >>= errorsFromInt
 --   option is set for the socket with non-zero linger time, and the socket
 --   has untransmitted data, then @close()@ shall block for up to the current
 --   linger interval until all data is transmitted."
-unsafeClose ::
+uninterruptibleClose ::
      Fd -- ^ Socket
   -> IO (Either Errno ())
-unsafeClose fd = c_unsafe_close fd >>= errorsFromInt
+uninterruptibleClose fd = c_unsafe_close fd >>= errorsFromInt
+
+-- | Shutdown a socket. This uses the unsafe FFI.
+uninterruptibleShutdown ::
+     Fd
+  -> ShutdownType
+  -> IO (Either Errno ())
+uninterruptibleShutdown fd typ =
+  c_unsafe_shutdown fd typ >>= errorsFromInt
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)
@@ -599,4 +778,40 @@ cssizeToCSize = fromIntegral
 -- 
 -- touchByteArray# :: ByteArray# -> IO ()
 -- touchByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
+shrinkMutableByteArray :: MutableByteArray RealWorld -> Int -> IO ()
+shrinkMutableByteArray (MutableByteArray arr) (I# sz) =
+  PM.primitive_ (shrinkMutableByteArray# arr sz)
+
+-- | Convert a 16-bit word from host to network byte order (e.g. @htons@).
+hostToNetworkShort :: Word16 -> Word16
+hostToNetworkShort = case targetByteOrder of
+  BigEndian -> id
+  LittleEndian -> byteSwap16
+
+-- | Convert a 16-bit word from network to host byte order (e.g. @ntohs@).
+networkToHostShort :: Word16 -> Word16
+networkToHostShort = case targetByteOrder of
+  BigEndian -> id
+  LittleEndian -> byteSwap16
+
+-- | Convert a 32-bit word from host to network byte order (e.g. @htonl@).
+hostToNetworkLong :: Word32 -> Word32
+hostToNetworkLong = case targetByteOrder of
+  BigEndian -> id
+  LittleEndian -> byteSwap32
+
+-- | Convert a 32-bit word from network to host byte order (e.g. @ntohl@).
+networkToHostLong :: Word32 -> Word32
+networkToHostLong = case targetByteOrder of
+  BigEndian -> id
+  LittleEndian -> byteSwap32
+
+{- $conversion
+These functions are used to convert IPv4 addresses and ports between network
+byte order and host byte order. They are essential when working with
+'SocketAddressInternet'. To avoid getting in the way of GHC compile-time
+optimizations, these functions are not actually implemented with FFI
+calls to @htonl@ and friends. Rather, they are reimplemented in haskell.
+-}
 
