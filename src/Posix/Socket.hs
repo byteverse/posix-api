@@ -45,6 +45,7 @@ module Posix.Socket
     -- ** Close
   , close
   , uninterruptibleClose
+  , uninterruptibleErrorlessClose
     -- ** Shutdown
   , uninterruptibleShutdown
     -- ** Send
@@ -730,6 +731,19 @@ uninterruptibleClose ::
      Fd -- ^ Socket
   -> IO (Either Errno ())
 uninterruptibleClose fd = c_unsafe_close fd >>= errorsFromInt
+
+-- | Close a socket with the unsafe FFI. Do not check for errors. It is only
+--   appropriate to use this when a socket is being closed to handle an
+--   exceptional case. Since the user will want the propogate the original
+--   exception, the exception provided by 'uninterruptibleClose' would just
+--   be discarded. This function allows us to potentially avoid an additional
+--   FFI call to 'getErrno'.
+uninterruptibleErrorlessClose ::
+     Fd -- ^ Socket
+  -> IO ()
+uninterruptibleErrorlessClose fd = do
+  _ <- c_unsafe_close fd
+  pure ()
 
 -- | Shutdown a socket. This uses the unsafe FFI.
 uninterruptibleShutdown ::
