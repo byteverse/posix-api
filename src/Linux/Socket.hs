@@ -1,9 +1,11 @@
 module Linux.Socket
-  ( -- * Types
+  ( -- * Functions
+    -- * Types
     SocketFlags(..)
     -- * Message Flags
   , LST.dontWait
   , LST.truncate
+  , LST.controlTruncate
     -- * Socket Flags
   , LST.closeOnExec
   , LST.nonblocking
@@ -33,3 +35,4 @@ import qualified Linux.Socket.Types as LST
 --   
 applySocketFlags :: SocketFlags -> Type -> Type
 applySocketFlags (SocketFlags s) (Type t) = Type (s .|. t)
+

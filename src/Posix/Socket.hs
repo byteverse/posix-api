@@ -66,6 +66,9 @@ module Posix.Socket
     -- ** Receive From
   , uninterruptibleReceiveFromMutableByteArray
   , uninterruptibleReceiveFromMutableByteArray_
+    -- ** Receive Message
+    -- $receiveMessage
+  , uninterruptibleReceiveMessageA
     -- ** Byte-Order Conversion
     -- $conversion
   , hostToNetworkLong
@@ -79,6 +82,7 @@ module Posix.Socket
   , OptionName(..)
   , OptionValue(..)
   , Level(..)
+  , Message(..)
   , MessageFlags(..)
   , ShutdownType(..)
     -- * Socket Address
@@ -129,13 +133,14 @@ module Posix.Socket
 import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
 import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,Int(I#))
-import GHC.Exts (shrinkMutableByteArray#)
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
+import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
 import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
@@ -265,6 +270,12 @@ foreign import ccall unsafe "sys/socket.h recvfrom_offset"
   c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
   c_unsafe_mutable_byte_array_ptr_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
+
+foreign import ccall unsafe "sys/socket.h recvmsg"
+  c_unsafe_addr_recvmsg :: Fd
+                        -> Addr# -- This addr is a pointer to msghdr
+                        -> MessageFlags 'Receive
+                        -> IO CSsize
 
 -- | Create an endpoint for communication, returning a file
 --   descriptor that refers to that endpoint. The
@@ -713,6 +724,52 @@ uninterruptibleReceiveFromMutableByteArray_ ::
 uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
 
+-- | Receive a message, scattering the input. This does not provide
+--   the socket address or the control messages. All of the chunks
+--   must have the same maximum size.
+uninterruptibleReceiveMessageA ::
+     Fd -- ^ Socket
+  -> CSize -- ^ Maximum bytes per chunk
+  -> CSize -- ^ Maximum number of chunks
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno (CSize,UnliftedArray ByteArray))
+uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
+  bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
+  iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
+  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  let go !ix !iovecAddr = if ix < csizeToInt chunkCount
+        then do
+          buf <- PM.newPinnedByteArray (csizeToInt chunkSize)
+          PM.writeUnliftedArray bufs ix buf
+          PST.pokeIOVectorBase iovecAddr (PM.mutableByteArrayContents buf)
+          PST.pokeIOVectorLength iovecAddr chunkSize
+          go (ix + 1) (PM.plusAddr iovecAddr (cintToInt PST.sizeofIOVector))
+        else pure ()
+  go 0 iovecsAddr
+  msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
+  let !msgHdrAddr@(Addr msgHdrAddr#) = PM.mutableByteArrayContents msgHdrBuf
+  PST.pokeMessageHeaderName msgHdrAddr PM.nullAddr
+  PST.pokeMessageHeaderNameLength msgHdrAddr 0
+  PST.pokeMessageHeaderIOVector msgHdrAddr iovecsAddr
+  PST.pokeMessageHeaderIOVectorLength msgHdrAddr chunkCount
+  PST.pokeMessageHeaderControl msgHdrAddr PM.nullAddr
+  PST.pokeMessageHeaderControlLength msgHdrAddr 0
+  PST.pokeMessageHeaderFlags msgHdrAddr flags
+  r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
+  if r > (-1)
+    then do
+      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs iovecsAddr
+      frozenBufs <- deepFreezeIOVectors filled bufs
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      pure (Right (cssizeToCSize r,frozenBufs))
+    else do
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      fmap Left getErrno
+
 -- | Close a socket. The <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>
 --   includes more details. This uses the safe FFI.
 close ::
@@ -787,12 +844,6 @@ cssizeToInt = fromIntegral
 cssizeToCSize :: CSsize -> CSize
 cssizeToCSize = fromIntegral
 
--- touchByteArray :: ByteArray -> IO ()
--- touchByteArray (ByteArray x) = touchByteArray# x
--- 
--- touchByteArray# :: ByteArray# -> IO ()
--- touchByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
-
 shrinkMutableByteArray :: MutableByteArray RealWorld -> Int -> IO ()
 shrinkMutableByteArray (MutableByteArray arr) (I# sz) =
   PM.primitive_ (shrinkMutableByteArray# arr sz)
@@ -821,11 +872,79 @@ networkToHostLong = case targetByteOrder of
   BigEndian -> id
   LittleEndian -> byteSwap32
 
+-- This is intended to be called on an array of iovec after recvmsg
+-- and before deepFreezeIOVectors.
+countAndShrinkIOVectors ::
+     Int -- Total number of supplied iovecs
+  -> Int -- Total amount of space used by receive
+  -> Int -- Amount of space per buffer (each buffer must have equal size)
+  -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
+  -> Addr -- Pointer to array of iovec
+  -> IO Int
+countAndShrinkIOVectors !n !totalUsedSz !maxBufSz !bufs = go 0 totalUsedSz where
+  -- This outer if (checking that the index is in bounds) should
+  -- not actually be necessary. I will remove once the test suite
+  -- bolsters my confidence.
+  go !ix !remainingBytes !iovec = if ix < n
+    then if remainingBytes >= maxBufSz
+      then go
+        (ix + 1)
+        (remainingBytes - maxBufSz)
+        (PM.plusAddr iovec (cintToInt PST.sizeofIOVector))
+      else if remainingBytes == 0
+        then pure ix
+        else do
+          buf <- PM.readUnliftedArray bufs ix
+          shrinkMutableByteArray buf remainingBytes
+          pure (ix + 1)
+    else pure ix
+
+deepFreezeIOVectors ::
+     Int -- How many iovecs actually had a non-zero number of bytes
+  -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
+  -> IO (UnliftedArray ByteArray)
+deepFreezeIOVectors n m = do
+  x <- PM.unsafeNewUnliftedArray n
+  let go !ix = if ix < n
+        then do
+          PM.writeUnliftedArray x ix =<< PM.unsafeFreezeByteArray =<< PM.readUnliftedArray m ix
+          go (ix + 1)
+        else PM.unsafeFreezeUnliftedArray x
+  go 0
+
+touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
+touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
+
+touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
+touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
+
+touchMutableUnliftedArray# :: MutableArrayArray# RealWorld -> IO ()
+touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
+touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
+touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
 {- $conversion
 These functions are used to convert IPv4 addresses and ports between network
 byte order and host byte order. They are essential when working with
 'SocketAddressInternet'. To avoid getting in the way of GHC compile-time
 optimizations, these functions are not actually implemented with FFI
 calls to @htonl@ and friends. Rather, they are reimplemented in haskell.
+-}
+
+
+{- $receiveMessage
+The function @recvMsg@ presents us with a challenge. Since it uses a
+data structure with many nested pointers, we have to use pinned byte
+arrays for everything. There is also the difficulty of marshalling
+haskell's unlifted array (array of arrays) type into what C's
+array of @iovec@. There's the question of the array of @cmsghdr@s.
+On top of all of this, we have to answer the question of whether
+we want to accept mutable buffer or whether we want to do the
+allocations internally (both for the buffers and for the ancilliary
+data structurs needed to massage the data into what C expects).
+
+What we do to handle this in offer several variants of @recvmsg@
+ending in @A@, @B@, etc.
 -}
 

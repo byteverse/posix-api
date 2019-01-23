@@ -58,16 +58,44 @@ module Posix.Socket.Types
   , levelSocket
     -- * Option Names
   , optionError
+    -- * Message Header
+    -- ** Peek
+  , peekMessageHeaderName
+  , peekMessageHeaderNameLength
+  , peekMessageHeaderIOVector
+  , peekMessageHeaderIOVectorLength
+    -- ** Poke
+  , pokeMessageHeaderName
+  , pokeMessageHeaderNameLength
+  , pokeMessageHeaderIOVector
+  , pokeMessageHeaderIOVectorLength
+  , pokeMessageHeaderControl
+  , pokeMessageHeaderControlLength
+  , pokeMessageHeaderFlags
+    -- ** Metadata
+  , sizeofMessageHeader
+    -- * IO Vector
+    -- ** Peek
+  , peekIOVectorBase
+  , peekIOVectorLength
+    -- ** Poke
+  , pokeIOVectorBase
+  , pokeIOVectorLength
+    -- ** Metadata
+  , sizeofIOVector
   ) where
 
 import Prelude hiding (read)
 
 import Data.Bits (Bits,(.|.))
-import Data.Primitive (ByteArray)
+import Data.Primitive (ByteArray,Addr(..))
 import Data.Word (Word16,Word32,Word64)
-import Foreign.C.Types (CInt(..))
+import Foreign.C.Types (CInt(..),CSize)
+import Foreign.Storable (peekByteOff,pokeByteOff)
+import GHC.Ptr (Ptr(..))
 
 import qualified Data.Kind
+import qualified Data.Primitive as PM
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
@@ -256,4 +284,94 @@ levelSocket = Level #{const SOL_SOCKET}
 -- | Socket error status (e.g. @SO_ERROR@)
 optionError :: OptionName
 optionError = OptionName #{const SO_ERROR}
+
+peekControlMessageHeaderLength :: Addr -> IO CInt
+peekControlMessageHeaderLength (Addr p) = #{peek struct cmsghdr, cmsg_len} (Ptr p)
+
+peekControlMessageHeaderLevel :: Addr -> IO Level
+peekControlMessageHeaderLevel (Addr p) = do
+  i <- #{peek struct cmsghdr, cmsg_level} (Ptr p)
+  pure (Level i)
+
+peekControlMessageHeaderType :: Addr -> IO Type
+peekControlMessageHeaderType (Addr p) = do
+  i <- #{peek struct cmsghdr, cmsg_type} (Ptr p)
+  pure (Type i)
+
+advanceControlMessageHeaderData :: Addr -> Addr
+advanceControlMessageHeaderData p =
+  PM.plusAddr p (#{size struct cmsghdr})
+
+peekIOVectorBase :: Addr -> IO Addr
+peekIOVectorBase (Addr p) = do
+  Ptr x <- #{peek struct iovec, iov_base} (Ptr p)
+  pure (Addr x)
+
+peekIOVectorLength :: Addr -> IO CSize
+peekIOVectorLength (Addr p) = #{peek struct iovec, iov_len} (Ptr p)
+
+-- | The size of a serialized @msghdr@.
+sizeofMessageHeader :: CInt
+sizeofMessageHeader = #{size struct sockaddr_in}
+
+-- | The size of a serialized @iovec@.
+sizeofIOVector :: CInt
+sizeofIOVector = #{size struct iovec}
+
+peekMessageHeaderName :: Addr -> IO Addr
+peekMessageHeaderName (Addr p) = do
+  Ptr x <- #{peek struct msghdr, msg_name} (Ptr p)
+  pure (Addr x)
+
+pokeMessageHeaderName :: Addr -> Addr -> IO ()
+pokeMessageHeaderName (Addr p) (Addr x) = #{poke struct msghdr, msg_name} (Ptr p) (Ptr x)
+
+pokeMessageHeaderNameLength :: Addr -> CInt -> IO ()
+pokeMessageHeaderNameLength (Addr p) = #{poke struct msghdr, msg_namelen} (Ptr p)
+
+pokeMessageHeaderIOVector :: Addr -> Addr -> IO ()
+pokeMessageHeaderIOVector (Addr p) (Addr x) = #{poke struct msghdr, msg_iov} (Ptr p) (Ptr x)
+
+pokeMessageHeaderIOVectorLength :: Addr -> CSize -> IO ()
+pokeMessageHeaderIOVectorLength (Addr p) = #{poke struct msghdr, msg_iovlen} (Ptr p)
+
+pokeMessageHeaderControl :: Addr -> Addr -> IO ()
+pokeMessageHeaderControl (Addr p) (Addr x) = #{poke struct msghdr, msg_control} (Ptr p) (Ptr x)
+
+pokeMessageHeaderControlLength :: Addr -> CSize -> IO ()
+pokeMessageHeaderControlLength (Addr p) = #{poke struct msghdr, msg_controllen} (Ptr p)
+
+pokeMessageHeaderFlags :: Addr -> MessageFlags Receive -> IO ()
+pokeMessageHeaderFlags (Addr p) (MessageFlags i) = #{poke struct msghdr, msg_flags} (Ptr p) i
+
+peekMessageHeaderNameLength :: Addr -> IO CInt
+peekMessageHeaderNameLength (Addr p) = #{peek struct msghdr, msg_namelen} (Ptr p)
+
+peekMessageHeaderIOVector :: Addr -> IO Addr
+peekMessageHeaderIOVector (Addr p) = do
+  Ptr r <- #{peek struct msghdr, msg_iov} (Ptr p)
+  pure (Addr r)
+
+peekMessageHeaderIOVectorLength :: Addr -> IO CSize
+peekMessageHeaderIOVectorLength (Addr p) = #{peek struct msghdr, msg_iovlen} (Ptr p)
+
+peekMessageHeaderControl :: Addr -> IO Addr
+peekMessageHeaderControl (Addr p) = do
+  Ptr r <- #{peek struct msghdr, msg_control} (Ptr p)
+  pure (Addr r)
+
+pokeIOVectorBase :: Addr -> Addr -> IO ()
+pokeIOVectorBase (Addr p) (Addr x) = #{poke struct iovec, iov_base} (Ptr p) (Ptr x)
+
+pokeIOVectorLength :: Addr -> CSize -> IO ()
+pokeIOVectorLength (Addr p) = #{poke struct iovec, iov_len} (Ptr p)
+
+
+peekMessageHeaderControlLength :: Addr -> IO CSize
+peekMessageHeaderControlLength (Addr p) = #{peek struct msghdr, msg_controllen} (Ptr p)
+
+peekMessageHeaderFlags :: Addr -> IO (MessageFlags Receive)
+peekMessageHeaderFlags (Addr p) = do
+  i <- #{peek struct msghdr, msg_flags} (Ptr p)
+  pure (MessageFlags i)
 

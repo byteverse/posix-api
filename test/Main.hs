@@ -8,7 +8,7 @@ import Data.Primitive (ByteArray)
 import Control.Concurrent (forkIO)
 import Control.Monad (when)
 import Foreign.C.Types (CInt,CSize)
-import Control.Concurrent (threadWaitRead)
+import Control.Concurrent (threadWaitRead,threadWaitWrite)
 
 import qualified GHC.Exts as E
 import qualified Data.Primitive as PM
@@ -25,12 +25,13 @@ tests = testGroup "Tests"
     , testCase "B" testSocketsB
     , testCase "C" testSocketsC
     , testCase "D" testSocketsD
+    , testCase "E" testSocketsE
     ]
   ]
 
 testSocketsA :: Assertion
 testSocketsA = do
-  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray b 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray a sample 0 5 mempty
@@ -43,7 +44,7 @@ testSocketsB = do
   let limit = 10
       wordSz = PM.sizeOf (undefined :: Int)
       cwordSz = fromIntegral wordSz :: CSize
-  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
   lock <- PM.newEmptyMVar
   let go1 !(ix :: Int) !(n :: Int) = if (ix < limit)
         then do
@@ -70,7 +71,7 @@ testSocketsB = do
 
 testSocketsC :: Assertion
 testSocketsC = do
-  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
@@ -80,12 +81,23 @@ testSocketsC = do
 
 testSocketsD :: Assertion
 testSocketsD = do
-  (a,b) <- demand =<< S.socketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
   _ <- forkIO $ do
     bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
     when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
   actual <- demand =<< S.receiveByteArray a 5 mempty
   sample @=? actual
+
+testSocketsE :: Assertion
+testSocketsE = do
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  _ <- forkIO $ do
+    threadWaitWrite b
+    bytesSent <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
+    when (bytesSent /= 5) (fail "testSocketsE: bytesSent was wrong")
+  threadWaitRead a
+  actual <- demand =<< S.uninterruptibleReceiveMessageA a 3 10 mempty
+  (5,E.fromList [E.fromList [1,2,3],E.fromList [4,5]]) @=? actual
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]

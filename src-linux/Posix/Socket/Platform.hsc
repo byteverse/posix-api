@@ -27,7 +27,7 @@ module Posix.Socket.Platform
   ) where
 
 import Control.Monad (when)
-import Data.Primitive (ByteArray(..),writeByteArray,indexByteArray)
+import Data.Primitive (MutableByteArray,ByteArray(..),writeByteArray,indexByteArray)
 import Data.Word (Word8)
 import Foreign.C.Types (CUShort,CInt)
 import GHC.Exts (ByteArray##,State##,RealWorld,runRW##)
@@ -42,26 +42,33 @@ import qualified Foreign.Storable as FS
 sizeofSocketAddressInternet :: CInt
 sizeofSocketAddressInternet = #{size struct sockaddr_in}
 
+internalWriteSocketAddressInternet ::
+     MutableByteArray s -- ^ Buffer, must have length of @sockaddr_in@
+  -> SocketAddressInternet
+  -> ST s ()
+internalWriteSocketAddressInternet bs (SocketAddressInternet {port, address}) = do
+  -- Initialize the bytearray by filling it with zeroes to ensure
+  -- that the sin_zero padding that linux expects is properly zeroed.
+  PM.setByteArray bs 0 #{size struct sockaddr_in} (0 :: Word8)
+  -- ATM: I cannot find a way to poke AF_INET into the socket address
+  -- without hardcoding the expected length (CUShort). There may be
+  -- a way to use hsc2hs to convert a size to a haskell type, but
+  -- I am not sure of how to do this. At any rate, I do not expect
+  -- that linux will ever change the bit size of sa_family_t, so I
+  -- am not too concerned.
+  #{write struct sockaddr_in, sin_family} bs (#{const AF_INET} :: CUShort)
+  -- The port and the address are already supposed to be in network
+  -- byte order in the SocketAddressInternet data type.
+  #{write struct sockaddr_in, sin_port} bs port
+  #{write struct sockaddr_in, sin_addr.s_addr} bs address
+
 -- | Serialize a IPv4 socket address so that it may be passed to @bind@.
 --   This serialization is operating-system dependent.
 encodeSocketAddressInternet :: SocketAddressInternet -> SocketAddress
-encodeSocketAddressInternet (SocketAddressInternet {port, address}) =
+encodeSocketAddressInternet sockAddrInternet =
   SocketAddress $ runByteArrayST $ unboxByteArrayST $ do
     bs <- PM.newByteArray #{size struct sockaddr_in}
-    -- Initialize the bytearray by filling it with zeroes to ensure
-    -- that the sin_zero padding that linux expects is properly zeroed.
-    PM.setByteArray bs 0 #{size struct sockaddr_in} (0 :: Word8)
-    -- ATM: I cannot find a way to poke AF_INET into the socket address
-    -- without hardcoding the expected length (CUShort). There may be
-    -- a way to use hsc2hs to convert a size to a haskell type, but
-    -- I am not sure of how to do this. At any rate, I do not expect
-    -- that linux will ever change the bit size of sa_family_t, so I
-    -- am not too concerned.
-    #{write struct sockaddr_in, sin_family} bs (#{const AF_INET} :: CUShort)
-    -- The port and the address are already supposed to be in network
-    -- byte order in the SocketAddressInternet data type.
-    #{write struct sockaddr_in, sin_port} bs port
-    #{write struct sockaddr_in, sin_addr.s_addr} bs address
+    internalWriteSocketAddressInternet bs sockAddrInternet
     r <- PM.unsafeFreezeByteArray bs
     pure r
 
