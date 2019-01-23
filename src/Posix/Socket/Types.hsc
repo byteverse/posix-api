@@ -133,8 +133,10 @@ instance Monoid (MessageFlags m) where mempty = MessageFlags 0
 
 -- | The @sockaddr@ data. This is an extensible tagged union, so this library
 --   has chosen to represent it as byte array. It is up to platform-specific
---   libraries to inhabit this type with values.
+--   libraries to inhabit this type with values. The byte array backing this
+--   may be unpinned or pinned.
 newtype SocketAddress = SocketAddress ByteArray
+  deriving newtype (Eq,Show)
 
 -- | The @option_value@ data.
 newtype OptionValue = OptionValue ByteArray

@@ -1,14 +1,16 @@
 {-# language BangPatterns #-}
+{-# language NamedFieldPuns #-}
 {-# language ScopedTypeVariables #-}
 
+import Control.Concurrent (forkIO)
+import Control.Concurrent (threadWaitRead,threadWaitWrite)
+import Control.Monad (when)
+import Data.Primitive (ByteArray)
+import Data.Word (Word32)
+import Foreign.C.Error (Errno,errnoToIOError)
+import Foreign.C.Types (CInt,CSize)
 import Test.Tasty
 import Test.Tasty.HUnit
-import Foreign.C.Error (Errno,errnoToIOError)
-import Data.Primitive (ByteArray)
-import Control.Concurrent (forkIO)
-import Control.Monad (when)
-import Foreign.C.Types (CInt,CSize)
-import Control.Concurrent (threadWaitRead,threadWaitWrite)
 
 import qualified GHC.Exts as E
 import qualified Data.Primitive as PM
@@ -19,13 +21,21 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Tests"
-  [ testGroup "sockets"
-    [ testCase "A" testSocketsA
-    , testCase "B" testSocketsB
-    , testCase "C" testSocketsC
-    , testCase "D" testSocketsD
-    , testCase "E" testSocketsE
+tests = testGroup "tests"
+  [ testGroup "posix"
+    [ testGroup "sockets"
+      [ testCase "A" testSocketsA
+      , testCase "B" testSocketsB
+      , testCase "C" testSocketsC
+      , testCase "D" testSocketsD
+      , testCase "E" testSocketsE
+      , testCase "F" testSocketsF
+      ]
+    ]
+  , testGroup "linux"
+    [ testGroup "sockets"
+      [ -- testCase "A" testLinuxSocketsA
+      ]
     ]
   ]
 
@@ -99,6 +109,27 @@ testSocketsE = do
   actual <- demand =<< S.uninterruptibleReceiveMessageA a 3 10 mempty
   (5,E.fromList [E.fromList [1,2,3],E.fromList [4,5]]) @=? actual
 
+testSocketsF :: Assertion
+testSocketsF = do
+  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  (expectedSzA,expectedSockAddrA) <- demand =<< S.uninterruptibleGetSocketName a 128
+  when (expectedSzA > 128) (fail "testSocketsF: bad socket address size for socket A")
+  portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
+    Nothing -> fail "testSocketsF: not a sockaddr_in"
+    Just (S.SocketAddressInternet {S.port}) -> pure port
+  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind b (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  _ <- forkIO $ do
+    threadWaitWrite b
+    bytesSent <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+    when (bytesSent /= 5) (fail "testSocketsF: bytesSent was wrong")
+  threadWaitRead a
+  actual <- demand =<< S.uninterruptibleReceiveMessageB a 5 2 mempty 128
+  (expectedSzB,expectedSockAddrB) <- demand =<< S.uninterruptibleGetSocketName b 128
+  when (expectedSzB > 128) (fail "testSocketsF: bad socket address size for socket B")
+  (expectedSzB,expectedSockAddrB,5,E.fromList [sample]) @=? actual
+
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
 
@@ -107,4 +138,7 @@ demand = either (\e -> ioError (errnoToIOError "test" e Nothing Nothing)) pure
   
 oneWord :: CSize -> IO ()
 oneWord x = if x == fromIntegral (PM.sizeOf (undefined :: Int)) then pure () else fail "expected one machine word"
+
+localhost :: Word32
+localhost = S.hostToNetworkLong 2130706433
 
