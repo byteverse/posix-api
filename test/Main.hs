@@ -143,7 +143,7 @@ testLinuxSocketsA = do
   when (bytesSent2 /= 4) (fail "testLinuxSocketsA: bytesSent2 was wrong")
   threadWaitRead a
   actual <- demand =<< L.uninterruptibleReceiveMultipleMessageA a 6 3 L.dontWait
-  (E.fromList [sample,sample2]) @=? actual
+  (5,E.fromList [sample,sample2]) @=? actual
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]

@@ -23,16 +23,17 @@ module Linux.Socket
 
 import Prelude hiding (truncate)
 
+import Control.Monad (when)
 import Data.Bits ((.|.))
+import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
+import Foreign.C.Error (Errno,getErrno)
+import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
+import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
 import Posix.Socket (Type(..),MessageFlags(..),Message(Receive))
-import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
-import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
-import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
-import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
-import Foreign.C.Error (Errno,getErrno)
 import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Data.Primitive as PM
@@ -72,7 +73,7 @@ uninterruptibleReceiveMultipleMessageA ::
   -> CSize -- ^ Maximum bytes per message
   -> CUInt -- ^ Maximum number of messages
   -> MessageFlags 'Receive -- ^ Flags
-  -> IO (Either Errno (UnliftedArray ByteArray))
+  -> IO (Either Errno (CUInt,UnliftedArray ByteArray))
 uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
   bufs <- PM.unsafeNewUnliftedArray (cuintToInt msgCount)
   mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
@@ -83,11 +84,11 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
   r <- c_unsafe_addr_recvmmsg s mmsghdrsAddr# msgCount flags nullAddr#
   if r > (-1)
     then do
-      frozenBufs <- shrinkAndFreezeMessages (cssizeToInt r) bufs mmsghdrsAddr
+      (maxMsgSz,frozenBufs) <- shrinkAndFreezeMessages msgSize (cssizeToInt r) bufs mmsghdrsAddr
       touchMutableUnliftedArray bufs
       touchMutableByteArray iovecsBuf
       touchMutableByteArray mmsghdrsBuf
-      pure (Right frozenBufs)
+      pure (Right (maxMsgSz,frozenBufs))
     else do
       touchMutableUnliftedArray bufs
       touchMutableByteArray iovecsBuf
@@ -130,22 +131,26 @@ initializeIOVector bufs iovecAddr msgSize ix = do
 -- Freeze a slice of the mutable byte arrays inside the unlifted array,
 -- shrinking the byte arrays before doing so.
 shrinkAndFreezeMessages ::
-     Int -- Actual number of received messages
+     CSize -- Full size of each buffer
+  -> Int -- Actual number of received messages
   -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
   -> Addr -- Array of mmsghdr
-  -> IO (UnliftedArray ByteArray)
-shrinkAndFreezeMessages !n !bufs !mmsghdr0 = do
+  -> IO (CUInt,UnliftedArray ByteArray)
+shrinkAndFreezeMessages !bufSize !n !bufs !mmsghdr0 = do
   r <- PM.unsafeNewUnliftedArray n
-  go r 0 mmsghdr0
+  go r 0 0 mmsghdr0
   where
-  go !r !ix !mmsghdr = if ix < n
+  go !r !ix !maxMsgSz !mmsghdr = if ix < n
     then do
       sz <- LST.peekMultipleMessageHeaderLength mmsghdr
       buf <- PM.readUnliftedArray bufs ix
-      shrinkMutableByteArray buf (cuintToInt sz)
+      when (cuintToInt sz < csizeToInt bufSize) (shrinkMutableByteArray buf (cuintToInt sz))
       PM.writeUnliftedArray r ix =<< PM.unsafeFreezeByteArray buf
-      go r (ix + 1) (PM.plusAddr mmsghdr (cintToInt LST.sizeofMultipleMessageHeader))
-    else PM.unsafeFreezeUnliftedArray r
+      go r (ix + 1) (max maxMsgSz sz)
+        (PM.plusAddr mmsghdr (cintToInt LST.sizeofMultipleMessageHeader))
+    else do
+      a <- PM.unsafeFreezeUnliftedArray r
+      pure (maxMsgSz,a)
 
 pokeMultipleMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> CUInt -> IO ()
 pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do
