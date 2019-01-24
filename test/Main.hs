@@ -16,6 +16,7 @@ import qualified GHC.Exts as E
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.MVar as PM
 import qualified Posix.Socket as S
+import qualified Linux.Socket as L
 
 main :: IO ()
 main = defaultMain tests
@@ -34,7 +35,7 @@ tests = testGroup "tests"
     ]
   , testGroup "linux"
     [ testGroup "sockets"
-      [ -- testCase "A" testLinuxSocketsA
+      [ testCase "A" testLinuxSocketsA
       ]
     ]
   ]
@@ -130,8 +131,25 @@ testSocketsF = do
   when (expectedSzB > 128) (fail "testSocketsF: bad socket address size for socket B")
   (expectedSzB,expectedSockAddrB,5,E.fromList [sample]) @=? actual
 
+
+testLinuxSocketsA :: Assertion
+testLinuxSocketsA = do
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  threadWaitWrite b
+  bytesSent1 <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
+  threadWaitWrite b
+  bytesSent2 <- demand =<< S.uninterruptibleSendByteArray b sample2 0 4 mempty
+  when (bytesSent1 /= 5) (fail "testLinuxSocketsA: bytesSent1 was wrong")
+  when (bytesSent2 /= 4) (fail "testLinuxSocketsA: bytesSent2 was wrong")
+  threadWaitRead a
+  actual <- demand =<< L.uninterruptibleReceiveMultipleMessageA a 6 3 L.dontWait
+  (E.fromList [sample,sample2]) @=? actual
+
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
+
+sample2 :: ByteArray
+sample2 = E.fromList [6,7,8,9]
 
 demand :: Either Errno a -> IO a
 demand = either (\e -> ioError (errnoToIOError "test" e Nothing Nothing)) pure

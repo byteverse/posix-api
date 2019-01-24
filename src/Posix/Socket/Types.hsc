@@ -314,7 +314,7 @@ peekIOVectorLength (Addr p) = #{peek struct iovec, iov_len} (Ptr p)
 
 -- | The size of a serialized @msghdr@.
 sizeofMessageHeader :: CInt
-sizeofMessageHeader = #{size struct sockaddr_in}
+sizeofMessageHeader = #{size struct msghdr}
 
 -- | The size of a serialized @iovec@.
 sizeofIOVector :: CInt

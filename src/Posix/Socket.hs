@@ -129,6 +129,31 @@ module Posix.Socket
   , PST.levelSocket
     -- ** Option Names
   , PST.optionError
+    -- ** Message Header
+    -- *** Peek
+  , PST.peekMessageHeaderName
+  , PST.peekMessageHeaderNameLength
+  , PST.peekMessageHeaderIOVector
+  , PST.peekMessageHeaderIOVectorLength
+    -- *** Poke
+  , PST.pokeMessageHeaderName
+  , PST.pokeMessageHeaderNameLength
+  , PST.pokeMessageHeaderIOVector
+  , PST.pokeMessageHeaderIOVectorLength
+  , PST.pokeMessageHeaderControl
+  , PST.pokeMessageHeaderControlLength
+  , PST.pokeMessageHeaderFlags
+    -- *** Metadata
+  , PST.sizeofMessageHeader
+    -- ** IO Vector
+    -- *** Peek
+  , PST.peekIOVectorBase
+  , PST.peekIOVectorLength
+    -- *** Poke
+  , PST.pokeIOVectorBase
+  , PST.pokeIOVectorLength
+    -- *** Metadata
+  , PST.sizeofIOVector
   ) where
 
 import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
@@ -725,6 +750,8 @@ uninterruptibleReceiveFromMutableByteArray_ ::
 uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
 
+
+
 -- | Receive a message, scattering the input. This does not provide
 --   the socket address or the control messages. All of the chunks
 --   must have the same maximum size. All resulting byte arrays have
@@ -742,17 +769,11 @@ uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
   initializeIOVectors bufs iovecsAddr chunkSize chunkCount
   msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
   let !msgHdrAddr@(Addr msgHdrAddr#) = PM.mutableByteArrayContents msgHdrBuf
-  PST.pokeMessageHeaderName msgHdrAddr PM.nullAddr
-  PST.pokeMessageHeaderNameLength msgHdrAddr 0
-  PST.pokeMessageHeaderIOVector msgHdrAddr iovecsAddr
-  PST.pokeMessageHeaderIOVectorLength msgHdrAddr chunkCount
-  PST.pokeMessageHeaderControl msgHdrAddr PM.nullAddr
-  PST.pokeMessageHeaderControlLength msgHdrAddr 0
-  PST.pokeMessageHeaderFlags msgHdrAddr flags
+  pokeMessageHeader msgHdrAddr PM.nullAddr 0 iovecsAddr chunkCount PM.nullAddr 0 flags
   r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
   if r > (-1)
     then do
-      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs iovecsAddr
+      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
       frozenBufs <- deepFreezeIOVectors filled bufs
       touchMutableUnliftedArray bufs
       touchMutableByteArray iovecsBuf
@@ -783,13 +804,7 @@ uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz =
   initializeIOVectors bufs iovecsAddr chunkSize chunkCount
   msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
   let !msgHdrAddr@(Addr msgHdrAddr#) = PM.mutableByteArrayContents msgHdrBuf
-  PST.pokeMessageHeaderName msgHdrAddr (PM.mutableByteArrayContents sockAddrBuf)
-  PST.pokeMessageHeaderNameLength msgHdrAddr maxSockAddrSz
-  PST.pokeMessageHeaderIOVector msgHdrAddr iovecsAddr
-  PST.pokeMessageHeaderIOVectorLength msgHdrAddr chunkCount
-  PST.pokeMessageHeaderControl msgHdrAddr PM.nullAddr
-  PST.pokeMessageHeaderControlLength msgHdrAddr 0
-  PST.pokeMessageHeaderFlags msgHdrAddr flags
+  pokeMessageHeader msgHdrAddr (PM.mutableByteArrayContents sockAddrBuf) maxSockAddrSz iovecsAddr chunkCount PM.nullAddr 0 flags
   r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
   if r > (-1)
     then do
@@ -798,7 +813,7 @@ uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz =
         then shrinkMutableByteArray sockAddrBuf (cintToInt actualSockAddrSz)
         else pure ()
       sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
-      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs iovecsAddr
+      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
       frozenBufs <- deepFreezeIOVectors filled bufs
       touchMutableUnliftedArray bufs
       touchMutableByteArray iovecsBuf
@@ -914,42 +929,67 @@ networkToHostLong = case targetByteOrder of
   BigEndian -> id
   LittleEndian -> byteSwap32
 
+pokeMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> IO ()
+pokeMessageHeader msgHdrAddr a b c d e f g = do
+  PST.pokeMessageHeaderName msgHdrAddr a
+  PST.pokeMessageHeaderNameLength msgHdrAddr b
+  PST.pokeMessageHeaderIOVector msgHdrAddr c
+  PST.pokeMessageHeaderIOVectorLength msgHdrAddr d
+  PST.pokeMessageHeaderControl msgHdrAddr e
+  PST.pokeMessageHeaderControlLength msgHdrAddr f
+  PST.pokeMessageHeaderFlags msgHdrAddr g
+
+-- This sets up an array of iovec. The iov_len is assigned to the
+-- same length in all of these. The actual buffers are allocated
+-- and stuck in an unlifted array. Pointers to these buffers (we can
+-- do that because they are pinned) go in the iov_base field.
 initializeIOVectors ::
-     MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
-  -> Addr
-  -> CSize
-  -> CSize
+     MutableUnliftedArray RealWorld (MutableByteArray RealWorld) -- buffers
+  -> Addr -- array of iovec
+  -> CSize -- chunk size
+  -> CSize -- chunk count
   -> IO ()
 initializeIOVectors bufs iovecsAddr chunkSize chunkCount =
   let go !ix !iovecAddr = if ix < csizeToInt chunkCount
         then do
-          buf <- PM.newPinnedByteArray (csizeToInt chunkSize)
-          PM.writeUnliftedArray bufs ix buf
-          PST.pokeIOVectorBase iovecAddr (PM.mutableByteArrayContents buf)
-          PST.pokeIOVectorLength iovecAddr chunkSize
+          initializeIOVector bufs iovecAddr chunkSize ix
           go (ix + 1) (PM.plusAddr iovecAddr (cintToInt PST.sizeofIOVector))
         else pure ()
    in go 0 iovecsAddr
 
+-- Initialize a single iovec. We write the pinned byte array into
+-- both the iov_base field and into an unlifted array. There is a
+-- copy of this function in Linux.Socket.
+initializeIOVector ::
+     MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
+  -> Addr
+  -> CSize
+  -> Int
+  -> IO ()
+initializeIOVector bufs iovecAddr chunkSize ix = do
+  buf <- PM.newPinnedByteArray (csizeToInt chunkSize)
+  PM.writeUnliftedArray bufs ix buf
+  PST.pokeIOVectorBase iovecAddr (PM.mutableByteArrayContents buf)
+  PST.pokeIOVectorLength iovecAddr chunkSize
+
 -- This is intended to be called on an array of iovec after recvmsg
--- and before deepFreezeIOVectors.
+-- and before deepFreezeIOVectors. An adaptation of this function exists
+-- in Linux.Socket. 
 countAndShrinkIOVectors ::
      Int -- Total number of supplied iovecs
   -> Int -- Total amount of space used by receive
   -> Int -- Amount of space per buffer (each buffer must have equal size)
   -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
-  -> Addr -- Pointer to array of iovec
   -> IO Int
 countAndShrinkIOVectors !n !totalUsedSz !maxBufSz !bufs = go 0 totalUsedSz where
   -- This outer if (checking that the index is in bounds) should
   -- not actually be necessary. I will remove once the test suite
   -- bolsters my confidence.
-  go !ix !remainingBytes !iovec = if ix < n
+  go !ix !remainingBytes = if ix < n
     then if remainingBytes >= maxBufSz
       then go
         (ix + 1)
         (remainingBytes - maxBufSz)
-        (PM.plusAddr iovec (cintToInt PST.sizeofIOVector))
       else if remainingBytes == 0
         then pure ix
         else do
@@ -958,6 +998,9 @@ countAndShrinkIOVectors !n !totalUsedSz !maxBufSz !bufs = go 0 totalUsedSz where
           pure (ix + 1)
     else pure ix
 
+-- Freeze a slice of the mutable byte arrays inside the unlifted
+-- array. This copies makes a copy of the slice of the original
+-- array. A copy of this function exists in Linux.Socket.
 deepFreezeIOVectors ::
      Int -- How many iovecs actually had a non-zero number of bytes
   -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)

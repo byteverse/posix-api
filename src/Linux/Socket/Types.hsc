@@ -8,7 +8,10 @@
 -- promoted data constructors correctly.
 {-# OPTIONS_GHC -fno-warn-unticked-promoted-constructors #-}
 
+#define _GNU_SOURCE
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
@@ -19,13 +22,27 @@ module Linux.Socket.Types
   , controlTruncate
   , closeOnExec
   , nonblocking
+    -- * Multiple Message Header
+  , pokeMultipleMessageHeaderName
+  , pokeMultipleMessageHeaderNameLength
+  , pokeMultipleMessageHeaderIOVector
+  , pokeMultipleMessageHeaderIOVectorLength
+  , pokeMultipleMessageHeaderControl
+  , pokeMultipleMessageHeaderControlLength
+  , pokeMultipleMessageHeaderFlags
+  , pokeMultipleMessageHeaderLength
+  , peekMultipleMessageHeaderLength
+  , sizeofMultipleMessageHeader
   ) where
 
 import Prelude hiding (truncate)
 
 import Data.Bits (Bits((.|.)))
-import Foreign.C.Types (CInt)
+import Data.Primitive (Addr(..))
+import Foreign.C.Types (CInt(..),CSize,CUInt)
 import Posix.Socket (MessageFlags(..),Message(Receive))
+import Foreign.Storable (peekByteOff,pokeByteOff)
+import GHC.Ptr (Ptr(..))
 
 newtype SocketFlags = SocketFlags CInt
   deriving stock (Eq)
@@ -81,4 +98,38 @@ closeOnExec = SocketFlags #{const SOCK_CLOEXEC}
 -- | The @SOCK_NONBLOCK@ receive flag or send flag.
 nonblocking :: SocketFlags
 nonblocking = SocketFlags #{const SOCK_NONBLOCK}
+
+-- | The size of a serialized @mmsghdr@.
+sizeofMultipleMessageHeader :: CInt
+sizeofMultipleMessageHeader = #{size struct mmsghdr}
+
+pokeMultipleMessageHeaderName :: Addr -> Addr -> IO ()
+pokeMultipleMessageHeaderName (Addr p) (Addr x) = #{poke struct mmsghdr, msg_hdr.msg_name} (Ptr p) (Ptr x)
+
+pokeMultipleMessageHeaderNameLength :: Addr -> CInt -> IO ()
+pokeMultipleMessageHeaderNameLength (Addr p) = #{poke struct mmsghdr, msg_hdr.msg_namelen} (Ptr p)
+
+pokeMultipleMessageHeaderIOVector :: Addr -> Addr -> IO ()
+pokeMultipleMessageHeaderIOVector (Addr p) (Addr x) = #{poke struct mmsghdr, msg_hdr.msg_iov} (Ptr p) (Ptr x)
+
+pokeMultipleMessageHeaderIOVectorLength :: Addr -> CSize -> IO ()
+pokeMultipleMessageHeaderIOVectorLength (Addr p) = #{poke struct mmsghdr, msg_hdr.msg_iovlen} (Ptr p)
+
+pokeMultipleMessageHeaderControl :: Addr -> Addr -> IO ()
+pokeMultipleMessageHeaderControl (Addr p) (Addr x) = #{poke struct mmsghdr, msg_hdr.msg_control} (Ptr p) (Ptr x)
+
+pokeMultipleMessageHeaderControlLength :: Addr -> CSize -> IO ()
+pokeMultipleMessageHeaderControlLength (Addr p) = #{poke struct mmsghdr, msg_hdr.msg_controllen} (Ptr p)
+
+pokeMultipleMessageHeaderFlags :: Addr -> MessageFlags Receive -> IO ()
+pokeMultipleMessageHeaderFlags (Addr p) (MessageFlags i) = #{poke struct mmsghdr, msg_hdr.msg_flags} (Ptr p) i
+
+pokeMultipleMessageHeaderLength :: Addr -> CUInt -> IO ()
+pokeMultipleMessageHeaderLength (Addr p) i = #{poke struct mmsghdr, msg_len} (Ptr p) i
+
+peekMultipleMessageHeaderNameLength :: Addr -> IO CInt
+peekMultipleMessageHeaderNameLength (Addr p) = #{peek struct mmsghdr, msg_hdr.msg_namelen} (Ptr p)
+
+peekMultipleMessageHeaderLength :: Addr -> IO CUInt
+peekMultipleMessageHeaderLength (Addr p) = #{peek struct mmsghdr, msg_len} (Ptr p)
 
