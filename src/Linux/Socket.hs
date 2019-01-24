@@ -114,6 +114,20 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
 -- This can be used to detect if the @sockaddr@ array has one or
 -- more corrupt @sockaddr@s in it. All byte arrays returned by
 -- this function are pinned.
+--
+-- The values in the returned tuple are:
+--
+-- * Error-checking number for @sockaddr@ size. Non-zero indicates
+--   that at least one @sockaddr@ required a number of bytes other
+--   than the expected number.
+-- * Pinned bytearray with all of the @sockaddr@s in it as a
+--   array of structures.
+-- * The size of the largest message received. If @MSG_TRUNC@ is used
+--   this lets the caller know if one or more messages were truncated.
+-- * The message data of each message.
+--
+-- The @sockaddr@s bytearray and the unlifted array of messages are
+-- guaranteed to have the same number of elements. 
 uninterruptibleReceiveMultipleMessageB ::
      Fd -- ^ Socket
   -> CInt -- ^ Expected @sockaddr@ size

@@ -22,18 +22,20 @@ module Posix.Socket.Platform
   , encodeSocketAddressUnix
     -- * Decoding Socket Addresses
   , decodeSocketAddressInternet
+  , indexSocketAddressInternet
     -- * Sizes
   , sizeofSocketAddressInternet
   ) where
 
 import Control.Monad (when)
-import Data.Primitive (MutableByteArray,ByteArray(..),writeByteArray,indexByteArray)
+import Data.Primitive (Addr,MutableByteArray,ByteArray(..),writeByteArray,indexByteArray)
 import Data.Word (Word8)
 import Foreign.C.Types (CUShort,CInt)
-import GHC.Exts (ByteArray##,State##,RealWorld,runRW##)
+import GHC.Exts (ByteArray##,State##,RealWorld,runRW##,Ptr(..))
 import GHC.ST (ST(..))
 import Posix.Socket.Types (SocketAddress(..))
 import Posix.Socket.Types (SocketAddressInternet(..),SocketAddressUnix(..))
+import Foreign.Storable (peekByteOff)
 
 import qualified Data.Primitive as PM
 import qualified Foreign.Storable as FS
@@ -72,6 +74,9 @@ encodeSocketAddressInternet sockAddrInternet =
     r <- PM.unsafeFreezeByteArray bs
     pure r
 
+-- | Decode a @sockaddr_in@ from a @sockaddr@ of an unknown
+--   family. This returns nothing when the size of the @sockaddr@
+--   is wrong or when the @sin_family@ is not @AF_INET@.
 decodeSocketAddressInternet :: SocketAddress -> Maybe SocketAddressInternet
 decodeSocketAddressInternet (SocketAddress arr) =
   if PM.sizeofByteArray arr == (#{size struct sockaddr_in})
@@ -84,6 +89,22 @@ decodeSocketAddressInternet (SocketAddress arr) =
         }
       else Nothing
     else Nothing
+
+-- | This is unsafe, but it is needed for the wrappers of @recvmmsg@.
+-- The index uses @sockaddr_in@s as elements, not bytes. The caller of this
+-- function is responsible for bounds checks.
+indexSocketAddressInternet :: Addr -> Int -> IO (Maybe SocketAddressInternet)
+indexSocketAddressInternet addr ix = do
+  fam <- #{peek struct sockaddr_in, sin_family} ptr
+  if fam == (#{const AF_INET} :: CUShort)
+    then do
+      port <- #{peek struct sockaddr_in, sin_port} ptr
+      address <- #{peek struct sockaddr_in, sin_addr.s_addr} ptr
+      pure (Just (SocketAddressInternet { port, address }))
+    else pure Nothing
+  where
+  !(PM.Addr offAddr) = PM.plusAddr addr (ix * (#{size struct sockaddr_in}))
+  ptr = Ptr offAddr
 
 -- | Serialize a unix domain socket address so that it may be passed to @bind@.
 --   This serialization is operating-system dependent. If the path provided by

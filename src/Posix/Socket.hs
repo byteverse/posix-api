@@ -96,6 +96,7 @@ module Posix.Socket
   , PSP.encodeSocketAddressUnix
     -- ** Decoding
   , PSP.decodeSocketAddressInternet
+  , PSP.indexSocketAddressInternet
     -- ** Sizes
   , PSP.sizeofSocketAddressInternet
     -- * Data Construction
