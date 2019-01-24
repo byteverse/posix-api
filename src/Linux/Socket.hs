@@ -8,6 +8,7 @@
 module Linux.Socket
   ( -- * Functions
     uninterruptibleReceiveMultipleMessageA
+  , uninterruptibleReceiveMultipleMessageB
     -- * Types
   , SocketFlags(..)
     -- * Message Flags
@@ -25,7 +26,7 @@ import Prelude hiding (truncate)
 
 import Control.Monad (when)
 import Data.Bits ((.|.))
-import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..))
 import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
@@ -65,9 +66,16 @@ applySocketFlags :: SocketFlags -> Type -> Type
 applySocketFlags (SocketFlags s) (Type t) = Type (s .|. t)
 
 -- | Receive multiple messages. This does not provide the socket
---   addresses or the control messages. It supplies @NULL@ for the
---   timeout argument. All of the messages must have the same maximum
---   size. All resulting byte arrays have been explicitly pinned.
+--   addresses or the control messages. It does not use any of the
+--   input-scattering that @recvmmsg@ offers, meaning that a single
+--   datagram is never split across noncontiguous memory. It supplies
+--   @NULL@ for the timeout argument. All of the messages must have the
+--   same maximum size. All resulting byte arrays have been explicitly
+--   pinned. In addition to bytearrays corresponding to each datagram,
+--   this also provides the maximum @msg_len@ that @recvmmsg@ wrote
+--   back out. This is provided so that users of @MSG_TRUNC@ can detect
+--   when bytes were dropped from the end of a message (although it does
+--   let the user figure out which message had bytes dropped).
 uninterruptibleReceiveMultipleMessageA ::
      Fd -- ^ Socket
   -> CSize -- ^ Maximum bytes per message
@@ -84,7 +92,7 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
   r <- c_unsafe_addr_recvmmsg s mmsghdrsAddr# msgCount flags nullAddr#
   if r > (-1)
     then do
-      (maxMsgSz,frozenBufs) <- shrinkAndFreezeMessages msgSize (cssizeToInt r) bufs mmsghdrsAddr
+      (_,maxMsgSz,frozenBufs) <- shrinkAndFreezeMessages msgSize 0 (cssizeToInt r) bufs mmsghdrsAddr
       touchMutableUnliftedArray bufs
       touchMutableByteArray iovecsBuf
       touchMutableByteArray mmsghdrsBuf
@@ -94,6 +102,51 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
       touchMutableByteArray iovecsBuf
       touchMutableByteArray mmsghdrsBuf
       fmap Left getErrno
+
+-- | Receive multiple messages. This is similar to
+-- @uninterruptibleReceiveMultipleMessageA@. However, it also
+-- provides the @sockaddr@s of the remote endpoints. These are
+-- written in contiguous memory to a bytearray of length
+-- @max_num_msgs * expected_sockaddr_sz@. The @sockaddr@s must
+-- all be expected to be of the same length. This function
+-- provides a @sockaddr@ size check that is non-zero when any
+-- @sockaddr@ had a length other than the expected length.
+-- This can be used to detect if the @sockaddr@ array has one or
+-- more corrupt @sockaddr@s in it. All byte arrays returned by
+-- this function are pinned.
+uninterruptibleReceiveMultipleMessageB ::
+     Fd -- ^ Socket
+  -> CInt -- ^ Expected @sockaddr@ size
+  -> CSize -- ^ Maximum bytes per message
+  -> CUInt -- ^ Maximum number of messages
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno (CInt,ByteArray,CUInt,UnliftedArray ByteArray))
+uninterruptibleReceiveMultipleMessageB !s !expSockAddrSize !msgSize !msgCount !flags = do
+  bufs <- PM.unsafeNewUnliftedArray (cuintToInt msgCount)
+  mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
+  iovecsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt S.sizeofIOVector)
+  sockaddrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt expSockAddrSize)
+  let sockaddrsAddr = PM.mutableByteArrayContents sockaddrsBuf
+  let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = PM.mutableByteArrayContents mmsghdrsBuf
+  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr mmsghdrsAddr sockaddrsAddr expSockAddrSize msgSize msgCount
+  r <- c_unsafe_addr_recvmmsg s mmsghdrsAddr# msgCount flags nullAddr#
+  if r > (-1)
+    then do
+      (validation,maxMsgSz,frozenBufs) <- shrinkAndFreezeMessages msgSize expSockAddrSize (cssizeToInt r) bufs mmsghdrsAddr
+      shrinkMutableByteArray sockaddrsBuf (cssizeToInt r * cintToInt expSockAddrSize)
+      sockaddrs <- PM.unsafeFreezeByteArray sockaddrsBuf
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray mmsghdrsBuf
+      touchMutableByteArray sockaddrsBuf
+      pure (Right (validation,sockaddrs,maxMsgSz,frozenBufs))
+    else do
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray mmsghdrsBuf
+      touchMutableByteArray sockaddrsBuf
+      fmap Left getErrno
+
 
 -- This sets up an array of mmsghdr. Each msghdr has msg_iov set to
 -- be an array of iovec with a single element.
@@ -107,12 +160,35 @@ initializeMultipleMessageHeadersWithoutSockAddr ::
 initializeMultipleMessageHeadersWithoutSockAddr bufs iovecsAddr mmsgHdrsAddr msgSize msgCount =
   let go !ix !iovecAddr !mmsgHdrAddr = if ix < cuintToInt msgCount
         then do
-          -- fail ("uhoetuh: " ++ show iovecsAddr ++ " " ++ show msgSize ++ " " ++ show msgCount)
           pokeMultipleMessageHeader mmsgHdrAddr PM.nullAddr 0 iovecAddr 1 PM.nullAddr 0 mempty 0
           initializeIOVector bufs iovecAddr msgSize ix
           go (ix + 1) (PM.plusAddr iovecAddr (cintToInt S.sizeofIOVector)) (PM.plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
         else pure ()
    in go 0 iovecsAddr mmsgHdrsAddr
+
+-- This sets up an array of mmsghdr. Each msghdr has msg_iov set to
+-- be an array of iovec with a single element. One giant buffer with
+-- space for all of the @sockaddr@s is used.
+initializeMultipleMessageHeadersWithSockAddr ::
+     MutableUnliftedArray RealWorld (MutableByteArray RealWorld) -- buffers
+  -> Addr -- array of iovec
+  -> Addr -- array of message headers
+  -> Addr -- array of sockaddrs
+  -> CInt -- expected sockaddr size
+  -> CSize -- message size
+  -> CUInt -- message count
+  -> IO ()
+initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr mmsgHdrsAddr sockaddrsAddr sockaddrSize msgSize msgCount =
+  let go !ix !iovecAddr !mmsgHdrAddr !sockaddrAddr = if ix < cuintToInt msgCount
+        then do
+          pokeMultipleMessageHeader mmsgHdrAddr sockaddrAddr sockaddrSize iovecAddr 1 PM.nullAddr 0 mempty 0
+          initializeIOVector bufs iovecAddr msgSize ix
+          go (ix + 1)
+            (PM.plusAddr iovecAddr (cintToInt S.sizeofIOVector))
+            (PM.plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
+            (PM.plusAddr sockaddrsAddr (cintToInt sockaddrSize))
+        else pure ()
+   in go 0 iovecsAddr mmsgHdrsAddr sockaddrsAddr
 
 -- Initialize a single iovec. We write the pinned byte array into
 -- both the iov_base field and into an unlifted array.
@@ -132,25 +208,27 @@ initializeIOVector bufs iovecAddr msgSize ix = do
 -- shrinking the byte arrays before doing so.
 shrinkAndFreezeMessages ::
      CSize -- Full size of each buffer
+  -> CInt -- Expected sockaddr size
   -> Int -- Actual number of received messages
   -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
   -> Addr -- Array of mmsghdr
-  -> IO (CUInt,UnliftedArray ByteArray)
-shrinkAndFreezeMessages !bufSize !n !bufs !mmsghdr0 = do
+  -> IO (CInt,CUInt,UnliftedArray ByteArray)
+shrinkAndFreezeMessages !bufSize !expSockAddrSize !n !bufs !mmsghdr0 = do
   r <- PM.unsafeNewUnliftedArray n
-  go r 0 0 mmsghdr0
+  go r 0 0 0 mmsghdr0
   where
-  go !r !ix !maxMsgSz !mmsghdr = if ix < n
+  go !r !validation !ix !maxMsgSz !mmsghdr = if ix < n
     then do
       sz <- LST.peekMultipleMessageHeaderLength mmsghdr
+      sockaddrSz <- LST.peekMultipleMessageHeaderNameLength mmsghdr
       buf <- PM.readUnliftedArray bufs ix
       when (cuintToInt sz < csizeToInt bufSize) (shrinkMutableByteArray buf (cuintToInt sz))
       PM.writeUnliftedArray r ix =<< PM.unsafeFreezeByteArray buf
-      go r (ix + 1) (max maxMsgSz sz)
+      go r (validation .|. (sockaddrSz - expSockAddrSize)) (ix + 1) (max maxMsgSz sz)
         (PM.plusAddr mmsghdr (cintToInt LST.sizeofMultipleMessageHeader))
     else do
       a <- PM.unsafeFreezeUnliftedArray r
-      pure (maxMsgSz,a)
+      pure (validation,maxMsgSz,a)
 
 pokeMultipleMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> CUInt -> IO ()
 pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do

@@ -32,6 +32,7 @@ module Linux.Socket.Types
   , pokeMultipleMessageHeaderFlags
   , pokeMultipleMessageHeaderLength
   , peekMultipleMessageHeaderLength
+  , peekMultipleMessageHeaderNameLength
   , sizeofMultipleMessageHeader
   ) where
 

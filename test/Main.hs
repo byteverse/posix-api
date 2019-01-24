@@ -36,6 +36,7 @@ tests = testGroup "tests"
   , testGroup "linux"
     [ testGroup "sockets"
       [ testCase "A" testLinuxSocketsA
+      , testCase "B" testLinuxSocketsB
       ]
     ]
   ]
@@ -121,10 +122,9 @@ testSocketsF = do
     Just (S.SocketAddressInternet {S.port}) -> pure port
   b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind b (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
-  _ <- forkIO $ do
-    threadWaitWrite b
-    bytesSent <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
-    when (bytesSent /= 5) (fail "testSocketsF: bytesSent was wrong")
+  threadWaitWrite b
+  bytesSent <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent /= 5) (fail "testSocketsF: bytesSent was wrong")
   threadWaitRead a
   actual <- demand =<< S.uninterruptibleReceiveMessageB a 5 2 mempty 128
   (expectedSzB,expectedSockAddrB) <- demand =<< S.uninterruptibleGetSocketName b 128
@@ -144,6 +144,29 @@ testLinuxSocketsA = do
   threadWaitRead a
   actual <- demand =<< L.uninterruptibleReceiveMultipleMessageA a 6 3 L.dontWait
   (5,E.fromList [sample,sample2]) @=? actual
+
+testLinuxSocketsB :: Assertion
+testLinuxSocketsB = do
+  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  (expectedSzA,expectedSockAddrA) <- demand =<< S.uninterruptibleGetSocketName a 128
+  when (expectedSzA /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket A")
+  portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
+    Nothing -> fail "testLinixSocketsB: not a sockaddr_in"
+    Just (S.SocketAddressInternet {S.port}) -> pure port
+  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind b (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  threadWaitWrite b
+  bytesSent1 <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent1 /= 5) (fail "testLinixSocketsB: bytesSent1 was wrong")
+  threadWaitWrite b
+  bytesSent2 <- demand =<< S.uninterruptibleSendToByteArray b sample2 0 4 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent2 /= 4) (fail "testLinixSocketsB: bytesSent2 was wrong")
+  threadWaitRead a
+  actual <- demand =<< L.uninterruptibleReceiveMultipleMessageB a S.sizeofSocketAddressInternet 6 3 L.dontWait
+  (expectedSzB,S.SocketAddress sabytesB) <- demand =<< S.uninterruptibleGetSocketName b 128
+  when (expectedSzB /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket B")
+  (0,sabytesB <> sabytesB,5,E.fromList [sample,sample2]) @=? actual
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
