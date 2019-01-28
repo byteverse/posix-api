@@ -92,16 +92,17 @@ decodeSocketAddressInternet (SocketAddress arr) =
 
 -- | This is unsafe, but it is needed for the wrappers of @recvmmsg@.
 -- The index uses @sockaddr_in@s as elements, not bytes. The caller of this
--- function is responsible for bounds checks.
-indexSocketAddressInternet :: Addr -> Int -> IO (Maybe SocketAddressInternet)
+-- function is responsible for bounds checks. Returns the actual (non-internet)
+-- socket family on a failure to parse.
+indexSocketAddressInternet :: Addr -> Int -> IO (Either CInt SocketAddressInternet)
 indexSocketAddressInternet addr ix = do
   fam <- #{peek struct sockaddr_in, sin_family} ptr
   if fam == (#{const AF_INET} :: CUShort)
     then do
       port <- #{peek struct sockaddr_in, sin_port} ptr
       address <- #{peek struct sockaddr_in, sin_addr.s_addr} ptr
-      pure (Just (SocketAddressInternet { port, address }))
-    else pure Nothing
+      pure (Right (SocketAddressInternet { port, address }))
+    else pure (Left (cushortToCInt fam))
   where
   !(PM.Addr offAddr) = PM.plusAddr addr (ix * (#{size struct sockaddr_in}))
   ptr = Ptr offAddr
@@ -129,6 +130,9 @@ encodeSocketAddressUnix (SocketAddressUnix !name) =
     when (sz < pathSize) $ do
       PM.copyByteArray bs familySize name 0 sz
     PM.unsafeFreezeByteArray bs
+
+cushortToCInt :: CUShort -> CInt
+cushortToCInt = fromIntegral
 
 unboxByteArrayST :: ST s ByteArray -> State## s -> (## State## s, ByteArray## ##)
 unboxByteArrayST (ST f) s = case f s of
