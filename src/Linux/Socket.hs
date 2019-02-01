@@ -140,6 +140,8 @@ uninterruptibleReceiveMultipleMessageB !s !expSockAddrSize !msgSize !msgCount !f
   mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
   iovecsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt S.sizeofIOVector)
   sockaddrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt expSockAddrSize)
+  -- Linux does not require zeroing out sockaddr_in before using it,
+  -- so we leave sockaddrsBuf alone after initialization.
   let sockaddrsAddr = PM.mutableByteArrayContents sockaddrsBuf
   let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = PM.mutableByteArrayContents mmsghdrsBuf
   let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
@@ -192,7 +194,7 @@ initializeMultipleMessageHeadersWithSockAddr ::
   -> CSize -- message size
   -> CUInt -- message count
   -> IO ()
-initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr mmsgHdrsAddr sockaddrsAddr sockaddrSize msgSize msgCount =
+initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr0 mmsgHdrsAddr0 sockaddrsAddr0 sockaddrSize msgSize msgCount =
   let go !ix !iovecAddr !mmsgHdrAddr !sockaddrAddr = if ix < cuintToInt msgCount
         then do
           pokeMultipleMessageHeader mmsgHdrAddr sockaddrAddr sockaddrSize iovecAddr 1 PM.nullAddr 0 mempty 0
@@ -200,9 +202,9 @@ initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr mmsgHdrsAddr sockad
           go (ix + 1)
             (PM.plusAddr iovecAddr (cintToInt S.sizeofIOVector))
             (PM.plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
-            (PM.plusAddr sockaddrsAddr (cintToInt sockaddrSize))
+            (PM.plusAddr sockaddrAddr (cintToInt sockaddrSize))
         else pure ()
-   in go 0 iovecsAddr mmsgHdrsAddr sockaddrsAddr
+   in go 0 iovecsAddr0 mmsgHdrsAddr0 sockaddrsAddr0
 
 -- Initialize a single iovec. We write the pinned byte array into
 -- both the iov_base field and into an unlifted array.

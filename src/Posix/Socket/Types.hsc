@@ -64,6 +64,12 @@ module Posix.Socket.Types
   , peekMessageHeaderNameLength
   , peekMessageHeaderIOVector
   , peekMessageHeaderIOVectorLength
+  , peekMessageHeaderControl
+  , peekMessageHeaderControlLength
+  , peekMessageHeaderFlags
+  , peekControlMessageHeaderLevel
+  , peekControlMessageHeaderLength
+  , peekControlMessageHeaderType
     -- ** Poke
   , pokeMessageHeaderName
   , pokeMessageHeaderNameLength
@@ -95,7 +101,6 @@ import Foreign.Storable (peekByteOff,pokeByteOff)
 import GHC.Ptr (Ptr(..))
 
 import qualified Data.Kind
-import qualified Data.Primitive as PM
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
@@ -300,9 +305,10 @@ peekControlMessageHeaderType (Addr p) = do
   i <- #{peek struct cmsghdr, cmsg_type} (Ptr p)
   pure (Type i)
 
-advanceControlMessageHeaderData :: Addr -> Addr
-advanceControlMessageHeaderData p =
-  PM.plusAddr p (#{size struct cmsghdr})
+-- Think about reintroducing this function when it becomes necessary.
+-- advanceControlMessageHeaderData :: Addr -> Addr
+-- advanceControlMessageHeaderData p =
+--   PM.plusAddr p (#{size struct cmsghdr})
 
 peekIOVectorBase :: Addr -> IO Addr
 peekIOVectorBase (Addr p) = do
