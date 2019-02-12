@@ -60,6 +60,8 @@ module Posix.Socket
     -- ** Send To
   , uninterruptibleSendToByteArray
   , uninterruptibleSendToMutableByteArray
+    -- ** writev
+  , writev
     -- ** Receive
   , receive
   , receiveByteArray
@@ -164,6 +166,7 @@ module Posix.Socket
 
 import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
+import Data.Foldable (for_)
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
 import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
 import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
@@ -295,6 +298,9 @@ foreign import ccall unsafe "sys/socket.h sendto_offset"
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
   c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
+
+foreign import ccall safe "sys/uio.h writev"
+  c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
 
 -- There are several ways to wrap recv.
 foreign import ccall safe "sys/socket.h recv"
@@ -566,6 +572,44 @@ sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
     PM.copyByteArray x (cintToInt off) b 0 (csizeToInt len)
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
+writev ::
+     Fd -- ^ Socket
+  -> UnliftedArray ByteArray -- ^ Source byte arrays
+  -> IO (Either Errno CSize)
+writev fd buffers = do
+  iovecs@(MutableByteArray iovecs#) :: MutableByteArray RealWorld <-
+    PM.newPinnedByteArray
+      (cintToInt PST.sizeofIOVector * PM.sizeofUnliftedArray buffers)
+
+  for_ [0 .. PM.sizeofUnliftedArray buffers - 1] $ \i -> do
+    buffer <- pinByteArray (PM.indexUnliftedArray buffers i)
+
+    let
+      targetAddr :: Addr
+      targetAddr =
+        PM.mutableByteArrayContents iovecs `PM.plusAddr`
+          (i * cintToInt PST.sizeofIOVector)
+
+    PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
+    PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
+
+  errorsFromSize =<<
+    c_safe_writev fd iovecs# (intToCInt (PM.sizeofUnliftedArray buffers))
+
+
+-- | Copy and pin a byte array if, it's not already pinned.
+pinByteArray :: ByteArray -> IO ByteArray
+pinByteArray byteArray =
+  if PM.isByteArrayPinned byteArray
+    then
+      pure byteArray
+    else do
+      pinnedByteArray <- PM.newPinnedByteArray len
+      PM.copyByteArray pinnedByteArray 0 byteArray 0 len
+      PM.unsafeFreezeByteArray pinnedByteArray
+  where
+    len = PM.sizeofByteArray byteArray
+
 -- | Send data from a mutable byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are
 --   actually present in the array. Since this uses the safe
@@ -644,7 +688,7 @@ uninterruptibleSendMutableByteArray fd (MutableByteArray b) off len flags =
 --   apply to this function as well. The offset and length arguments
 --   cause a slice of the byte array to be sent rather than the entire
 --   byte array.
-uninterruptibleSendToByteArray :: 
+uninterruptibleSendToByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
   -> CInt -- ^ Offset into source array
@@ -660,7 +704,7 @@ uninterruptibleSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(
 --   apply to this function as well. The offset and length arguments
 --   cause a slice of the mutable byte array to be sent rather than the entire
 --   byte array.
-uninterruptibleSendToMutableByteArray :: 
+uninterruptibleSendToMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source byte array
   -> CInt -- ^ Offset into source array
@@ -917,6 +961,9 @@ errorsFromInt r = if r == 0
 intToCInt :: Int -> CInt
 intToCInt = fromIntegral
 
+intToCSize :: Int -> CSize
+intToCSize = fromIntegral
+
 cintToInt :: CInt -> Int
 cintToInt = fromIntegral
 
@@ -1003,7 +1050,7 @@ initializeIOVector bufs iovecAddr chunkSize ix = do
 
 -- This is intended to be called on an array of iovec after recvmsg
 -- and before deepFreezeIOVectors. An adaptation of this function exists
--- in Linux.Socket. 
+-- in Linux.Socket.
 countAndShrinkIOVectors ::
      Int -- Total number of supplied iovecs
   -> Int -- Total amount of space used by receive
