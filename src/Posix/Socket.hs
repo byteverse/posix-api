@@ -42,6 +42,8 @@ module Posix.Socket
   , uninterruptibleGetSocketName
     -- ** Get Socket Option
   , uninterruptibleGetSocketOption
+    -- ** Set Socket Option
+  , uninterruptibleSetSocketOptionInt
     -- ** Close
   , close
   , uninterruptibleClose
@@ -122,6 +124,8 @@ module Posix.Socket
   , PST.peek
   , PST.outOfBand
   , PST.waitAll
+    -- ** Send Flags
+  , PST.noSignal
     -- ** Shutdown Types
   , PST.read
   , PST.write
@@ -130,6 +134,7 @@ module Posix.Socket
   , PST.levelSocket
     -- ** Option Names
   , PST.optionError
+  , PST.broadcast
     -- ** Message Header
     -- *** Peek
   , PST.peekMessageHeaderName
@@ -244,6 +249,13 @@ foreign import ccall unsafe "sys/socket.h getsockopt"
                       -> MutableByteArray# RealWorld -- Option value
                       -> MutableByteArray# RealWorld -- Option len (Ptr CInt)
                       -> IO CInt
+
+foreign import ccall unsafe "sys/socket.h setsockopt_int"
+  c_unsafe_setsockopt_int :: Fd
+                          -> Level
+                          -> OptionName
+                          -> CInt -- option_value
+                          -> IO CInt
 
 -- Per the spec the type signature of connect is:
 --   int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
@@ -518,6 +530,22 @@ uninterruptibleGetSocketOption sock level optName maxSz = do
       pure (Right (sz,OptionValue value))
     else fmap Left getErrno
 
+-- | Set the value for the option specified by the 'Option' argument for
+--   the socket specified by the 'Fd' argument. The
+--   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/getsockopt.html POSIX specification>
+--   of @getsockopt@ includes more details. This variant requires that the
+--   size of the @option_value@
+--   be the same as the size of 'CInt'. That is, the @option_name@ must
+--   describe an option that is represented by a C integer. This is a
+--   common case, so we avoid allocations by reference-passing in C.
+uninterruptibleSetSocketOptionInt ::
+     Fd -- ^ Socket
+  -> Level -- ^ Socket level
+  -> OptionName -- ^ Option name
+  -> CInt -- ^ Option value
+  -> IO (Either Errno ())
+uninterruptibleSetSocketOptionInt sock level optName optValue =
+  c_unsafe_setsockopt_int sock level optName optValue >>= errorsFromInt
 
 -- | Send data from a byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are

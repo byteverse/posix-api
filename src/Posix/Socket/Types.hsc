@@ -50,6 +50,8 @@ module Posix.Socket.Types
   , peek
   , outOfBand
   , waitAll
+    -- * Send Flags
+  , noSignal
     -- * Shutdown Types
   , read
   , write
@@ -58,6 +60,7 @@ module Posix.Socket.Types
   , levelSocket
     -- * Option Names
   , optionError
+  , broadcast
     -- * Message Header
     -- ** Peek
   , peekMessageHeaderName
@@ -111,10 +114,12 @@ newtype Domain = Domain CInt
 --   basis.
 newtype Type = Type CInt
 
-newtype Protocol = Protocol CInt
+newtype Protocol = Protocol { getProtocol :: CInt }
 
 newtype Level = Level CInt
 
+-- | Options used in the @option_name@ argument in @getsockopt@
+--   or @setsockopt@.  
 newtype OptionName = OptionName CInt
 
 -- | Which end of the socket to shutdown.
@@ -244,6 +249,10 @@ peek = MessageFlags #{const MSG_PEEK}
 waitAll :: MessageFlags Receive
 waitAll = MessageFlags #{const MSG_WAITALL}
 
+-- | The @MSG_NOSIGNAL@ send flag.
+noSignal :: MessageFlags Send
+noSignal = MessageFlags #{const MSG_NOSIGNAL}
+
 -- | The default protocol for a socket type.
 defaultProtocol :: Protocol
 defaultProtocol = Protocol 0
@@ -291,6 +300,10 @@ levelSocket = Level #{const SOL_SOCKET}
 -- | Socket error status (e.g. @SO_ERROR@)
 optionError :: OptionName
 optionError = OptionName #{const SO_ERROR}
+
+-- | Transmission of broadcast messages is supported (e.g. @SO_BROADCAST@)
+broadcast :: OptionName
+broadcast = OptionName #{const SO_BROADCAST}
 
 peekControlMessageHeaderLength :: Addr -> IO CInt
 peekControlMessageHeaderLength (Addr p) = #{peek struct cmsghdr, cmsg_len} (Ptr p)
@@ -373,7 +386,6 @@ pokeIOVectorBase (Addr p) (Addr x) = #{poke struct iovec, iov_base} (Ptr p) (Ptr
 
 pokeIOVectorLength :: Addr -> CSize -> IO ()
 pokeIOVectorLength (Addr p) = #{poke struct iovec, iov_len} (Ptr p)
-
 
 peekMessageHeaderControlLength :: Addr -> IO CSize
 peekMessageHeaderControlLength (Addr p) = #{peek struct msghdr, msg_controllen} (Ptr p)

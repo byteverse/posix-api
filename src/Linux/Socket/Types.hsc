@@ -2,6 +2,7 @@
 {-# language DerivingStrategies #-}
 {-# language DuplicateRecordFields #-}
 {-# language GeneralizedNewtypeDeriving #-}
+{-# language BinaryLiterals #-}
 {-# language TypeApplications #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
@@ -12,6 +13,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/udp.h>
+#include <asm/byteorder.h>
+#include "custom.h"
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
@@ -22,6 +26,7 @@ module Linux.Socket.Types
   , controlTruncate
   , closeOnExec
   , nonblocking
+  , headerInclude
     -- * Multiple Message Header
   , pokeMultipleMessageHeaderName
   , pokeMultipleMessageHeaderNameLength
@@ -34,16 +39,38 @@ module Linux.Socket.Types
   , peekMultipleMessageHeaderLength
   , peekMultipleMessageHeaderNameLength
   , sizeofMultipleMessageHeader
+    -- * UDP Header
+  , sizeofUdpHeader
+  , pokeUdpHeaderSourcePort
+  , pokeUdpHeaderDestinationPort
+  , pokeUdpHeaderLength
+  , pokeUdpHeaderChecksum
+    -- * IPv4 Header
+  , sizeofIpHeader
+  , pokeIpHeaderVersionIhl
+  , pokeIpHeaderTypeOfService
+  , pokeIpHeaderTotalLength
+  , pokeIpHeaderIdentifier
+  , pokeIpHeaderFragmentOffset
+  , pokeIpHeaderTimeToLive
+  , pokeIpHeaderProtocol
+  , pokeIpHeaderChecksum
+  , pokeIpHeaderSourceAddress
+  , pokeIpHeaderDestinationAddress
   ) where
 
 import Prelude hiding (truncate)
 
-import Data.Bits (Bits((.|.)))
-import Data.Primitive (Addr(..))
+import Data.Bits (Bits((.|.)),unsafeShiftL,unsafeShiftR)
+import Data.Word (Word8,Word16,Word32)
+import Data.Primitive (Addr(..),MutableByteArray,writeByteArray)
 import Foreign.C.Types (CInt(..),CSize,CUInt)
-import Posix.Socket (MessageFlags(..),Message(Receive))
+import Posix.Socket (MessageFlags(..),Message(Receive),OptionName(..))
 import Foreign.Storable (peekByteOff,pokeByteOff)
 import GHC.Ptr (Ptr(..))
+import GHC.Exts (RealWorld)
+
+import qualified Data.Primitive as PM
 
 newtype SocketFlags = SocketFlags CInt
   deriving stock (Eq)
@@ -100,7 +127,12 @@ closeOnExec = SocketFlags #{const SOCK_CLOEXEC}
 nonblocking :: SocketFlags
 nonblocking = SocketFlags #{const SOCK_NONBLOCK}
 
--- | The size of a serialized @mmsghdr@.
+-- | If enabled, the user supplies an IP header in front of the
+-- user data.  Valid only for @SOCK_RAW@ sockets.
+headerInclude :: OptionName
+headerInclude = OptionName #{const IP_HDRINCL}
+
+-- | The size of a @mmsghdr@ struct.
 sizeofMultipleMessageHeader :: CInt
 sizeofMultipleMessageHeader = #{size struct mmsghdr}
 
@@ -134,3 +166,67 @@ peekMultipleMessageHeaderNameLength (Addr p) = #{peek struct mmsghdr, msg_hdr.ms
 peekMultipleMessageHeaderLength :: Addr -> IO CUInt
 peekMultipleMessageHeaderLength (Addr p) = #{peek struct mmsghdr, msg_len} (Ptr p)
 
+-- | The size of a @udphdr@ struct.
+sizeofUdpHeader :: CInt
+sizeofUdpHeader = #{size struct udphdr}
+
+pokeUdpHeaderSourcePort :: Addr -> Word16 -> IO ()
+pokeUdpHeaderSourcePort (Addr p) = #{poke struct udphdr, source} (Ptr p)
+
+pokeUdpHeaderDestinationPort :: Addr -> Word16 -> IO ()
+pokeUdpHeaderDestinationPort (Addr p) = #{poke struct udphdr, dest} (Ptr p)
+
+pokeUdpHeaderLength :: Addr -> Word16 -> IO ()
+pokeUdpHeaderLength (Addr p) = #{poke struct udphdr, len} (Ptr p)
+
+pokeUdpHeaderChecksum :: Addr -> Word16 -> IO ()
+pokeUdpHeaderChecksum (Addr p) = #{poke struct udphdr, check} (Ptr p)
+
+-- | The size of an @iphdr@ struct.
+sizeofIpHeader :: CInt
+sizeofIpHeader = #{size struct iphdr}
+
+-- | This poke function requires the user to pack the version and the
+-- internet header length (IHL), each 4 bits, into a single 8-bit word.
+-- The version should be in the most significant bits. This function
+-- will marshal the value appropriately depending on the platform's
+-- bit-endianness.
+pokeIpHeaderVersionIhl :: Addr -> Word8 -> IO ()
+-- TODO: Verify if this is correct.
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+pokeIpHeaderVersionIhl p _ = PM.writeOffAddr p 0 (0b01000101 :: Word8)
+  -- PM.writeOffAddr p 0 (unsafeShiftL w 4 .|. unsafeShiftR w 4)
+  -- where
+  -- rev = 
+#elif defined (__BIG_ENDIAN_BITFIELD)
+pokeIpHeaderVersionIhl p w = PM.writeOffAddr p 0 w
+#else
+ERROR_BITFIELD_ENDIANNESS_NOT_SET
+#endif
+
+pokeIpHeaderTypeOfService :: Addr -> Word8 -> IO ()
+pokeIpHeaderTypeOfService (Addr p) = #{poke struct iphdr, tos} (Ptr p)
+
+pokeIpHeaderTotalLength :: Addr -> Word16 -> IO ()
+pokeIpHeaderTotalLength (Addr p) = #{poke struct iphdr, tot_len} (Ptr p)
+
+pokeIpHeaderIdentifier :: Addr -> Word16 -> IO ()
+pokeIpHeaderIdentifier (Addr p) = #{poke struct iphdr, id} (Ptr p)
+
+pokeIpHeaderFragmentOffset :: Addr -> Word16 -> IO ()
+pokeIpHeaderFragmentOffset (Addr p) = #{poke struct iphdr, frag_off} (Ptr p)
+
+pokeIpHeaderTimeToLive :: Addr -> Word8 -> IO ()
+pokeIpHeaderTimeToLive (Addr p) = #{poke struct iphdr, ttl} (Ptr p)
+
+pokeIpHeaderProtocol :: Addr -> Word8 -> IO ()
+pokeIpHeaderProtocol (Addr p) = #{poke struct iphdr, protocol} (Ptr p)
+
+pokeIpHeaderChecksum :: Addr -> Word16 -> IO ()
+pokeIpHeaderChecksum (Addr p) = #{poke struct iphdr, check} (Ptr p)
+
+pokeIpHeaderSourceAddress :: Addr -> Word32 -> IO ()
+pokeIpHeaderSourceAddress (Addr p) = #{poke struct iphdr, saddr} (Ptr p)
+
+pokeIpHeaderDestinationAddress :: Addr -> Word32 -> IO ()
+pokeIpHeaderDestinationAddress (Addr p) = #{poke struct iphdr, daddr} (Ptr p)

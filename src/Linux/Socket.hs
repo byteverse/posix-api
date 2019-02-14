@@ -11,6 +11,8 @@ module Linux.Socket
   , uninterruptibleReceiveMultipleMessageB
     -- * Types
   , SocketFlags(..)
+    -- * Option Names
+  , LST.headerInclude
     -- * Message Flags
   , LST.dontWait
   , LST.truncate
@@ -20,6 +22,24 @@ module Linux.Socket
   , LST.nonblocking
     -- * Twiddle
   , applySocketFlags
+    -- * UDP Header
+  , LST.sizeofUdpHeader
+  , LST.pokeUdpHeaderSourcePort
+  , LST.pokeUdpHeaderDestinationPort
+  , LST.pokeUdpHeaderLength
+  , LST.pokeUdpHeaderChecksum
+    -- * IPv4 Header
+  , LST.sizeofIpHeader
+  , LST.pokeIpHeaderVersionIhl
+  , LST.pokeIpHeaderTypeOfService
+  , LST.pokeIpHeaderTotalLength
+  , LST.pokeIpHeaderIdentifier
+  , LST.pokeIpHeaderFragmentOffset
+  , LST.pokeIpHeaderTimeToLive
+  , LST.pokeIpHeaderProtocol
+  , LST.pokeIpHeaderChecksum
+  , LST.pokeIpHeaderSourceAddress
+  , LST.pokeIpHeaderDestinationAddress
   ) where
 
 import Prelude hiding (truncate)
@@ -51,9 +71,11 @@ foreign import ccall unsafe "sys/socket.h recvmmsg"
                          -> IO CSsize
 
 -- | Linux extends the @type@ argument of
---   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to accept
---   flags. It is advisable to set @SOCK_CLOEXEC@ on when opening a socket
---   on linux. For example, we may open a TCP Internet socket with:
+--   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
+--   setting two socket flags on socket creation: @SOCK_CLOEXEC@ and
+--   @SOCK_NONBLOCK@. It is advisable to set @SOCK_CLOEXEC@ on when
+--   opening a socket on linux. For example, we may open a TCP Internet
+--   socket with:
 --
 --   > uninterruptibleSocket internet (applySocketFlags closeOnExec stream) defaultProtocol
 --
