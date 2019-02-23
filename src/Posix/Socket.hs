@@ -13,7 +13,7 @@
 --     that \"Any sane library must have @socklen_t@ be the same size as @int@.
 --     Anything else breaks any BSD socket layer stuff.\"
 --   * Send and receive each have several variants. They are distinguished by
---     the safe/unsafe FFI use and by the @Addr@/@ByteArray@/@MutableByteArray@
+--     the safe\/unsafe FFI use and by the @Addr@\/@ByteArray@/@MutableByteArray@
 --     buffer type. They all call @send@ or @recv@ exactly once. They do not
 --     repeatedly make syscalls like some of the functions in @network@.
 --     Users who want that behavior need to build on top of this package.
