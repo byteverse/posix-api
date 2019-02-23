@@ -20,5 +20,5 @@ ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t le
   return recvfrom(socket, (void*)(buffer + offset), length, flags, address, address_len);
 }
 int setsockopt_int(int socket, int level, int option_name, int option_value) {
-  setsockopt(socket,level,option_name,&option_value,sizeof(int));
+  return setsockopt(socket,level,option_name,&option_value,sizeof(int));
 }
