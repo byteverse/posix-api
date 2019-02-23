@@ -6,7 +6,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent (threadWaitRead,threadWaitWrite)
 import Control.Monad (when)
 import Data.Primitive (ByteArray)
-import Data.Word (Word32)
+import Data.Word (Word32,Word8)
 import Foreign.C.Error (Errno,errnoToIOError)
 import Foreign.C.Types (CInt,CSize)
 import Test.Tasty
@@ -31,6 +31,7 @@ tests = testGroup "tests"
       , testCase "D" testSocketsD
       , testCase "E" testSocketsE
       , testCase "F" testSocketsF
+      , testCase "G" testSocketsG
       ]
     ]
   , testGroup "linux"
@@ -131,6 +132,19 @@ testSocketsF = do
   when (expectedSzB > 128) (fail "testSocketsF: bad socket address size for socket B")
   (expectedSzB,expectedSockAddrB,5,E.fromList [sample]) @=? actual
 
+testSocketsG :: Assertion
+testSocketsG = do
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  _ <- forkIO $ do
+    bytesSent <- demand =<< S.writeVector b
+      ( E.fromList
+        [ E.fromList (enumFromTo (1 :: Word8) 6)
+        , E.fromList (enumFromTo (7 :: Word8) 9)
+        ]
+      )
+    when (bytesSent /= 9) (fail "testSocketsG: bytesSent was wrong")
+  actual <- demand =<< S.receiveByteArray a 9 mempty
+  E.fromList (enumFromTo (1 :: Word8) 9) @=? actual
 
 testLinuxSocketsA :: Assertion
 testLinuxSocketsA = do
