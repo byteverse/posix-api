@@ -60,8 +60,8 @@ module Posix.Socket
     -- ** Send To
   , uninterruptibleSendToByteArray
   , uninterruptibleSendToMutableByteArray
-    -- ** writev
-  , writev
+    -- ** Write Vector
+  , writeVector
     -- ** Receive
   , receive
   , receiveByteArray
@@ -166,15 +166,15 @@ module Posix.Socket
 
 import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
-import Data.Foldable (for_)
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
-import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
+import Data.Primitive (MutableUnliftedArray(..),UnliftedArray(..))
 import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#)
+import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
@@ -572,16 +572,18 @@ sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
     PM.copyByteArray x (cintToInt off) b 0 (csizeToInt len)
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
-writev ::
+-- | Write data from multiple byte arrays to the file/socket associated
+--   with the file descriptor. This does not support slicing.
+writeVector ::
      Fd -- ^ Socket
   -> UnliftedArray ByteArray -- ^ Source byte arrays
   -> IO (Either Errno CSize)
-writev fd buffers = do
+writeVector fd buffers = do
   iovecs@(MutableByteArray iovecs#) :: MutableByteArray RealWorld <-
     PM.newPinnedByteArray
       (cintToInt PST.sizeofIOVector * PM.sizeofUnliftedArray buffers)
 
-  for_ [0 .. PM.sizeofUnliftedArray buffers - 1] $ \i -> do
+  downward (PM.sizeofUnliftedArray buffers) $ \i -> do
     buffer <- pinByteArray (PM.indexUnliftedArray buffers i)
 
     let
@@ -593,9 +595,21 @@ writev fd buffers = do
     PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
     PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
 
-  errorsFromSize =<<
+  r <- errorsFromSize =<<
     c_safe_writev fd iovecs# (intToCInt (PM.sizeofUnliftedArray buffers))
+  -- Touching the unlifted array here is crucial to ensuring that
+  -- the buffers do not get GCed before c_safe_writev. Just touching
+  -- the unlifted array should keep all of its children alive too.
+  touchUnliftedArray buffers
+  pure r
 
+-- Internal function. Upper bound is exclusive. Hits every
+-- int in the range [0,hi) from highest to lowest.
+downward :: Int -> (Int -> IO a) -> IO ()
+downward !hi f = go (hi - 1) where
+  go !ix = if ix >= 0
+    then f ix *> go (ix - 1)
+    else pure ()
 
 -- | Copy and pin a byte array if, it's not already pinned.
 pinByteArray :: ByteArray -> IO ByteArray
@@ -1093,11 +1107,17 @@ deepFreezeIOVectors n m = do
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
 touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
 
+touchUnliftedArray :: UnliftedArray a -> IO ()
+touchUnliftedArray (UnliftedArray x) = touchUnliftedArray# x
+
 touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
 touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 
 touchMutableUnliftedArray# :: MutableArrayArray# RealWorld -> IO ()
 touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
+touchUnliftedArray# :: ArrayArray# -> IO ()
+touchUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
 touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
