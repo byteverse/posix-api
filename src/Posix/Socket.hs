@@ -1,5 +1,8 @@
 {-# language BangPatterns #-}
 {-# language DataKinds #-}
+{-# language GADTSyntax #-}
+{-# language KindSignatures #-}
+{-# language LambdaCase #-}
 {-# language MagicHash #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnboxedTuples #-}
@@ -173,7 +176,8 @@ import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#)
+import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#)
+import GHC.Exts (Addr#,TYPE,RuntimeRep(UnliftedRep))
 import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
@@ -573,7 +577,9 @@ sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
 -- | Write data from multiple byte arrays to the file/socket associated
---   with the file descriptor. This does not support slicing.
+--   with the file descriptor. This does not support slicing. The
+--   <http://pubs.opengroup.org/onlinepubs/009604499/functions/writev.html POSIX specification>
+--   of @writev@ includes more details.
 writeVector ::
      Fd -- ^ Socket
   -> UnliftedArray ByteArray -- ^ Source byte arrays
@@ -583,44 +589,72 @@ writeVector fd buffers = do
     PM.newPinnedByteArray
       (cintToInt PST.sizeofIOVector * PM.sizeofUnliftedArray buffers)
 
-  downward (PM.sizeofUnliftedArray buffers) $ \i -> do
-    buffer <- pinByteArray (PM.indexUnliftedArray buffers i)
-
-    let
-      targetAddr :: Addr
-      targetAddr =
-        PM.mutableByteArrayContents iovecs `PM.plusAddr`
-          (i * cintToInt PST.sizeofIOVector)
-
-    PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
-    PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
-
+  -- We construct a list of the new buffers for the sole purpose
+  -- of ensuring that we can touch the list later to keep all
+  -- the new buffers live.
+  newBufs <- foldDownward (PM.sizeofUnliftedArray buffers) UNil $ \newBufs i -> do
+    let !buf = PM.indexUnliftedArray buffers i
+    pinByteArray buf >>= \case
+      Nothing -> do
+        let buffer = buf
+        let targetAddr :: Addr
+            targetAddr = PM.mutableByteArrayContents iovecs `PM.plusAddr`
+              (i * cintToInt PST.sizeofIOVector)
+        PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
+        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
+        pure newBufs
+      Just buffer -> do
+        let targetAddr :: Addr
+            targetAddr = PM.mutableByteArrayContents iovecs `PM.plusAddr`
+              (i * cintToInt PST.sizeofIOVector)
+        PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
+        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
+        pure (UCons (unByteArray buffer) newBufs)
   r <- errorsFromSize =<<
     c_safe_writev fd iovecs# (intToCInt (PM.sizeofUnliftedArray buffers))
-  -- Touching the unlifted array here is crucial to ensuring that
+  -- Touching both the unlifted array and the list of new buffers
+  -- here is crucial to ensuring that
   -- the buffers do not get GCed before c_safe_writev. Just touching
-  -- the unlifted array should keep all of its children alive too.
+  -- them should keep all of their children alive too.
   touchUnliftedArray buffers
+  touchLifted newBufs
   pure r
+
+data UList (a :: TYPE 'UnliftedRep) where
+  UNil :: UList a
+  UCons :: a -> UList a -> UList a
 
 -- Internal function. Upper bound is exclusive. Hits every
 -- int in the range [0,hi) from highest to lowest.
 downward :: Int -> (Int -> IO a) -> IO ()
+{-# INLINE downward #-}
 downward !hi f = go (hi - 1) where
   go !ix = if ix >= 0
     then f ix *> go (ix - 1)
     else pure ()
 
+-- Internal function. Fold with strict accumulator. Upper bound is exclusive.
+-- Hits every int in the range [0,hi) from highest to lowest.
+foldDownward :: forall a. Int -> a -> (a -> Int -> IO a) -> IO a
+{-# INLINE foldDownward #-}
+foldDownward !hi !a0 f = go (hi - 1) a0 where
+  go :: Int -> a -> IO a
+  go !ix !a = if ix >= 0
+    then f a ix >>= go (ix - 1)
+    else pure a
+
 -- | Copy and pin a byte array if, it's not already pinned.
-pinByteArray :: ByteArray -> IO ByteArray
+pinByteArray :: ByteArray -> IO (Maybe ByteArray)
+{-# INLINE pinByteArray #-}
 pinByteArray byteArray =
   if PM.isByteArrayPinned byteArray
     then
-      pure byteArray
+      pure Nothing
     else do
       pinnedByteArray <- PM.newPinnedByteArray len
       PM.copyByteArray pinnedByteArray 0 byteArray 0 len
-      PM.unsafeFreezeByteArray pinnedByteArray
+      r <- PM.unsafeFreezeByteArray pinnedByteArray
+      pure (Just byteArray)
   where
     len = PM.sizeofByteArray byteArray
 
@@ -1104,6 +1138,9 @@ deepFreezeIOVectors n m = do
         else PM.unsafeFreezeUnliftedArray x
   go 0
 
+unByteArray :: ByteArray -> ByteArray#
+unByteArray (ByteArray x) = x
+
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
 touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
 
@@ -1121,6 +1158,9 @@ touchUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
 touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
+touchLifted :: a -> IO ()
+touchLifted x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 {- $conversion
 These functions are used to convert IPv4 addresses and ports between network
