@@ -654,7 +654,7 @@ pinByteArray byteArray =
       pinnedByteArray <- PM.newPinnedByteArray len
       PM.copyByteArray pinnedByteArray 0 byteArray 0 len
       r <- PM.unsafeFreezeByteArray pinnedByteArray
-      pure (Just byteArray)
+      pure (Just r)
   where
     len = PM.sizeofByteArray byteArray
 
