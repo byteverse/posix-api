@@ -1,4 +1,5 @@
 {-# language BangPatterns #-}
+{-# language BinaryLiterals #-}
 {-# language LambdaCase #-}
 {-# language NamedFieldPuns #-}
 {-# language ScopedTypeVariables #-}
@@ -6,10 +7,11 @@
 import Control.Concurrent (forkIO)
 import Control.Concurrent (threadWaitRead,threadWaitWrite)
 import Control.Monad (when)
-import Data.Primitive (ByteArray)
+import Data.Primitive (ByteArray,MutablePrimArray(..),MutableByteArray(..))
 import Data.Word (Word32,Word8)
 import Foreign.C.Error (Errno,errnoToIOError)
 import Foreign.C.Types (CInt,CSize)
+import GHC.Exts (RealWorld)
 import Numeric (showIntAtBase)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -203,6 +205,7 @@ testLinuxEpollA = do
     bytesSent <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
     when (bytesSent /= 5) (fail "testLinuxEpollA: bytesSent was wrong")
   evs <- PM.newPrimArray 2
+  loadGarbage evs
   evCount <- demand =<< Epoll.waitMutablePrimArray epfd evs 2 (-1)
   when (evCount /= 1) (fail ("testLinuxEpollA: evCount was " ++ show evCount))
   Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 0
@@ -217,6 +220,18 @@ binChar = \case
   0 -> '0'
   1 -> '1'
   _ -> 'x'
+
+loadGarbage :: MutablePrimArray RealWorld a -> IO ()
+loadGarbage (MutablePrimArray x) = do
+  let arr = MutableByteArray x
+      go :: Int -> IO ()
+      go !ix = if ix > (-1)
+        then do
+          PM.writeByteArray arr ix ((0b01010101 :: Word8) + fromIntegral ix)
+          go (ix - 1)
+        else pure ()
+  n <- PM.getSizeofMutableByteArray arr
+  go (n - 1)
 
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
