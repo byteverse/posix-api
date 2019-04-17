@@ -58,11 +58,11 @@ internalWriteSocketAddressInternet bs (SocketAddressInternet {port, address}) = 
   -- I am not sure of how to do this. At any rate, I do not expect
   -- that linux will ever change the bit size of sa_family_t, so I
   -- am not too concerned.
-  #{write struct sockaddr_in, sin_family} bs (#{const AF_INET} :: CUShort)
+  #{writeByteArray struct sockaddr_in, sin_family} bs 0 (#{const AF_INET} :: CUShort)
   -- The port and the address are already supposed to be in network
   -- byte order in the SocketAddressInternet data type.
-  #{write struct sockaddr_in, sin_port} bs port
-  #{write struct sockaddr_in, sin_addr.s_addr} bs address
+  #{writeByteArray struct sockaddr_in, sin_port} bs 0 port
+  #{writeByteArray struct sockaddr_in, sin_addr.s_addr} bs 0 address
 
 -- | Serialize a IPv4 socket address so that it may be passed to @bind@.
 --   This serialization is operating-system dependent.
@@ -82,10 +82,10 @@ decodeSocketAddressInternet (SocketAddress arr) =
   if PM.sizeofByteArray arr == (#{size struct sockaddr_in})
     -- We assume that AF_INET takes up 16 bits. See the comment in
     -- encodeSocketAddressInternet for more detail.
-    then if (#{index struct sockaddr_in, sin_family} arr) == (#{const AF_INET} :: CUShort)
+    then if (#{indexByteArray struct sockaddr_in, sin_family} arr 0) == (#{const AF_INET} :: CUShort)
       then Just $ SocketAddressInternet
-        { port = #{index struct sockaddr_in, sin_port} arr
-        , address = #{index struct sockaddr_in, sin_addr.s_addr} arr
+        { port = #{indexByteArray struct sockaddr_in, sin_port} arr 0
+        , address = #{indexByteArray struct sockaddr_in, sin_addr.s_addr} arr 0
         }
       else Nothing
     else Nothing

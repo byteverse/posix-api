@@ -73,16 +73,22 @@ extra-source-files:
 
 library
   exposed-modules:
+    Linux.Epoll
     Linux.Socket
     Posix.Directory
+    Posix.Poll
+    Posix.Select
     Posix.Socket
+    Posix.Types
   other-modules:
+    Linux.Epoll.Types
     Linux.Socket.Types
-    Posix.Socket.Types
+    Posix.Poll.Types
     Posix.Socket.Platform
+    Posix.Socket.Types
   build-depends:
     , base >=4.11.1 && <5
-    , primitive >= 0.6.4
+    , primitive-checked >= 0.6.4
   hs-source-dirs: src
   if os(linux)
     hs-source-dirs: src-linux
@@ -91,7 +97,7 @@ library
   c-sources: cbits/HaskellPosix.c
   include-dirs: include
   includes: HaskellPosix.h
-  build-tools: hsc2hs
+  build-tools-depends: hsc2hs
 
 test-suite test
   type: exitcode-stdio-1.0

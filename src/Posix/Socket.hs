@@ -188,6 +188,7 @@ import System.Posix.Types (Fd(..),CSsize(..))
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
 import qualified Control.Monad.Primitive as PM
+import qualified GHC.Exts as Exts
 
 -- This module include operating-system specific code used
 -- to serialize some of various kind of socket address types.
@@ -375,7 +376,7 @@ uninterruptibleBind ::
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
 uninterruptibleBind fd (SocketAddress b@(ByteArray b#)) =
-  c_bind fd b# (intToCInt (PM.sizeofByteArray b)) >>= errorsFromInt
+  c_bind fd b# (intToCInt (PM.sizeofByteArray b)) >>= errorsFromInt_
 
 -- | Mark the socket as a passive socket, that is, as a socket that
 --   will be used to accept incoming connection requests using @accept@.
@@ -387,7 +388,7 @@ uninterruptibleListen ::
      Fd -- ^ Socket
   -> CInt -- ^ Backlog
   -> IO (Either Errno ())
-uninterruptibleListen fd backlog = c_listen fd backlog >>= errorsFromInt
+uninterruptibleListen fd backlog = c_listen fd backlog >>= errorsFromInt_
 
 -- | Connect the socket to the specified socket address.
 --   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
@@ -397,13 +398,13 @@ connect ::
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
 connect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
-  case PM.isByteArrayPinned sockAddr of
-    True -> c_safe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
+  case isByteArrayPinned sockAddr of
+    True -> c_safe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt_
     False -> do
       let len = PM.sizeofByteArray sockAddr
       x@(MutableByteArray x#) <- PM.newPinnedByteArray len
       PM.copyByteArray x 0 sockAddr 0 len
-      c_safe_mutablebytearray_connect fd x# (intToCInt len) >>= errorsFromInt
+      c_safe_mutablebytearray_connect fd x# (intToCInt len) >>= errorsFromInt_
 
 -- | Connect the socket to the specified socket address.
 --   The <http://pubs.opengroup.org/onlinepubs/9699919799/functions/connect.html POSIX specification>
@@ -414,7 +415,7 @@ uninterruptibleConnect ::
   -> SocketAddress -- ^ Socket address, extensible tagged union
   -> IO (Either Errno ())
 uninterruptibleConnect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
-  c_unsafe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt
+  c_unsafe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt_
 
 -- | Extract the first connection on the queue of pending connections. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
@@ -555,7 +556,7 @@ uninterruptibleSetSocketOptionInt ::
   -> CInt -- ^ Option value
   -> IO (Either Errno ())
 uninterruptibleSetSocketOptionInt sock level optName optValue =
-  c_unsafe_setsockopt_int sock level optName optValue >>= errorsFromInt
+  c_unsafe_setsockopt_int sock level optName optValue >>= errorsFromInt_
 
 -- | Send data from a byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are
@@ -569,7 +570,7 @@ sendByteArray ::
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-sendByteArray fd b@(ByteArray b#) off len flags = if PM.isByteArrayPinned b
+sendByteArray fd b@(ByteArray b#) off len flags = if isByteArrayPinned b
   then errorsFromSize =<< c_safe_bytearray_send fd b# off len flags
   else do
     x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
@@ -624,15 +625,6 @@ data UList (a :: TYPE 'UnliftedRep) where
   UNil :: UList a
   UCons :: a -> UList a -> UList a
 
--- Internal function. Upper bound is exclusive. Hits every
--- int in the range [0,hi) from highest to lowest.
-downward :: Int -> (Int -> IO a) -> IO ()
-{-# INLINE downward #-}
-downward !hi f = go (hi - 1) where
-  go !ix = if ix >= 0
-    then f ix *> go (ix - 1)
-    else pure ()
-
 -- Internal function. Fold with strict accumulator. Upper bound is exclusive.
 -- Hits every int in the range [0,hi) from highest to lowest.
 foldDownward :: forall a. Int -> a -> (a -> Int -> IO a) -> IO a
@@ -647,7 +639,7 @@ foldDownward !hi !a0 f = go (hi - 1) a0 where
 pinByteArray :: ByteArray -> IO (Maybe ByteArray)
 {-# INLINE pinByteArray #-}
 pinByteArray byteArray =
-  if PM.isByteArrayPinned byteArray
+  if isByteArrayPinned byteArray
     then
       pure Nothing
     else do
@@ -670,7 +662,7 @@ sendMutableByteArray ::
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
-sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if PM.isMutableByteArrayPinned b
+sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if isMutableByteArrayPinned b
   then errorsFromSize =<< c_safe_mutablebytearray_send fd b# off len flags
   else do
     x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
@@ -953,7 +945,7 @@ uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz =
 close ::
      Fd -- ^ Socket
   -> IO (Either Errno ())
-close fd = c_safe_close fd >>= errorsFromInt
+close fd = c_safe_close fd >>= errorsFromInt_
 
 -- | Close a socket. This uses the unsafe FFI. According to the
 --   <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>,
@@ -965,7 +957,7 @@ close fd = c_safe_close fd >>= errorsFromInt
 uninterruptibleClose ::
      Fd -- ^ Socket
   -> IO (Either Errno ())
-uninterruptibleClose fd = c_unsafe_close fd >>= errorsFromInt
+uninterruptibleClose fd = c_unsafe_close fd >>= errorsFromInt_
 
 -- | Close a socket with the unsafe FFI. Do not check for errors. It is only
 --   appropriate to use this when a socket is being closed to handle an
@@ -986,7 +978,7 @@ uninterruptibleShutdown ::
   -> ShutdownType
   -> IO (Either Errno ())
 uninterruptibleShutdown fd typ =
-  c_unsafe_shutdown fd typ >>= errorsFromInt
+  c_unsafe_shutdown fd typ >>= errorsFromInt_
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)
@@ -1001,8 +993,8 @@ errorsFromFd r = if r > (-1)
 -- Sometimes, functions that return an int use zero to indicate
 -- success and negative one to indicate failure without including
 -- additional information in the value.
-errorsFromInt :: CInt -> IO (Either Errno ())
-errorsFromInt r = if r == 0
+errorsFromInt_ :: CInt -> IO (Either Errno ())
+errorsFromInt_ r = if r == 0
   then pure (Right ())
   else fmap Left getErrno
 
@@ -1186,3 +1178,12 @@ What we do to handle this in offer several variants of @recvmsg@
 ending in @A@, @B@, etc.
 -}
 
+isByteArrayPinned :: ByteArray -> Bool
+{-# inline isByteArrayPinned #-}
+isByteArrayPinned (ByteArray arr#) =
+  Exts.isTrue# (Exts.isByteArrayPinned# arr#)
+
+isMutableByteArrayPinned :: MutableByteArray s -> Bool
+{-# inline isMutableByteArrayPinned #-}
+isMutableByteArrayPinned (MutableByteArray marr#) =
+  Exts.isTrue# (Exts.isMutableByteArrayPinned# marr#)

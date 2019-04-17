@@ -1,4 +1,5 @@
 {-# language BangPatterns #-}
+{-# language LambdaCase #-}
 {-# language NamedFieldPuns #-}
 {-# language ScopedTypeVariables #-}
 
@@ -9,6 +10,7 @@ import Data.Primitive (ByteArray)
 import Data.Word (Word32,Word8)
 import Foreign.C.Error (Errno,errnoToIOError)
 import Foreign.C.Types (CInt,CSize)
+import Numeric (showIntAtBase)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -17,6 +19,7 @@ import qualified Data.Primitive as PM
 import qualified Data.Primitive.MVar as PM
 import qualified Posix.Socket as S
 import qualified Linux.Socket as L
+import qualified Linux.Epoll as Epoll
 
 main :: IO ()
 main = defaultMain tests
@@ -38,6 +41,9 @@ tests = testGroup "tests"
     [ testGroup "sockets"
       [ testCase "A" testLinuxSocketsA
       , testCase "B" testLinuxSocketsB
+      ]
+    , testGroup "epoll"
+      [ testCase "A" testLinuxEpollA
       ]
     ]
   ]
@@ -182,6 +188,36 @@ testLinuxSocketsB = do
   when (expectedSzB /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket B")
   (0,sabytesB <> sabytesB,5,E.fromList [sample,sample2]) @=? actual
 
+testLinuxEpollA :: Assertion
+testLinuxEpollA = do
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  epfd <- demand =<< Epoll.uninterruptibleCreate 1
+  reg <- PM.newPrimArray 1
+  PM.writePrimArray reg 0 $ Epoll.Event
+    { Epoll.events = Epoll.input <> Epoll.edgeTriggered
+    , Epoll.payload = a
+    }
+  demand =<< Epoll.uninterruptibleControlMutablePrimArray epfd Epoll.add a reg
+  _ <- forkIO $ do
+    threadWaitWrite b
+    bytesSent <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
+    when (bytesSent /= 5) (fail "testLinuxEpollA: bytesSent was wrong")
+  evs <- PM.newPrimArray 2
+  evCount <- demand =<< Epoll.waitMutablePrimArray epfd evs 2 (-1)
+  when (evCount /= 1) (fail ("testLinuxEpollA: evCount was " ++ show evCount))
+  Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 0
+  when (payload /= a) (fail ("testLinuxEpollA: payload was " ++ show payload))
+  let Epoll.Events e = events
+  when (not (Epoll.containsEvents events Epoll.input)) $ do
+    fail ("testLinuxEpollA: events bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
+  pure ()
+
+binChar :: Int -> Char
+binChar = \case
+  0 -> '0'
+  1 -> '1'
+  _ -> 'x'
+
 sample :: ByteArray
 sample = E.fromList [1,2,3,4,5]
 
@@ -196,4 +232,3 @@ oneWord x = if x == fromIntegral (PM.sizeOf (undefined :: Int)) then pure () els
 
 localhost :: Word32
 localhost = S.hostToNetworkLong 2130706433
-
