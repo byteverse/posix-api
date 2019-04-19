@@ -38,7 +38,8 @@ module Linux.Epoll
   , T.error
   , T.edgeTriggered
     -- * Events Combinators
-  , T.containsEvents
+  , T.containsAnyEvents
+  , T.containsAllEvents
     -- * Marshalling
   , T.sizeofEvent
   , T.peekEventEvents
@@ -54,6 +55,7 @@ module Linux.Epoll
 
 import Prelude hiding (error)
 
+import Assertion (assertMutablePrimArrayPinned)
 import Data.Primitive (MutablePrimArray(..))
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..))
@@ -71,13 +73,13 @@ foreign import ccall unsafe "sys/epoll.h epoll_create1"
   c_epoll_create1 :: EpollFlags -> IO Fd
 
 foreign import ccall unsafe "sys/epoll.h epoll_wait"
-  c_epoll_wait :: Fd -> MutableByteArray# RealWorld -> CInt -> CInt -> IO CInt
+  c_epoll_wait_unsafe :: Fd -> MutableByteArray# RealWorld -> CInt -> CInt -> IO CInt
 
 foreign import ccall safe "sys/epoll.h epoll_wait"
   c_epoll_wait_safe :: Fd -> MutableByteArray# RealWorld -> CInt -> CInt -> IO CInt
 
 foreign import ccall unsafe "sys/epoll.h epoll_ctl"
-  c_epoll_ctl :: Fd -> ControlOperation -> Fd -> MutableByteArray# RealWorld -> IO CInt
+  c_epoll_ctl_unsafe :: Fd -> ControlOperation -> Fd -> MutableByteArray# RealWorld -> IO CInt
 
 -- -- | Write @data.u64@ from @struct epoll_event@.
 -- writeEventEvents ::
@@ -93,11 +95,13 @@ foreign import ccall unsafe "sys/epoll.h epoll_ctl"
 uninterruptibleCreate ::
      CInt -- ^ Size, ignored since Linux 2.6.8
   -> IO (Either Errno Fd)
+{-# inline uninterruptibleCreate #-}
 uninterruptibleCreate !sz = c_epoll_create sz >>= errorsFromFd
 
 uninterruptibleCreate1 ::
      EpollFlags -- ^ Flags
   -> IO (Either Errno Fd)
+{-# inline uninterruptibleCreate1 #-}
 uninterruptibleCreate1 !flags =
   c_epoll_create1 flags >>= errorsFromFd
 
@@ -111,17 +115,24 @@ uninterruptibleWaitMutablePrimArray ::
   -> MutablePrimArray RealWorld (Event 'Response a) -- ^ Event buffer
   -> CInt -- ^ Maximum events
   -> IO (Either Errno CInt) -- ^ Number of events received
+{-# inline uninterruptibleWaitMutablePrimArray #-}
 uninterruptibleWaitMutablePrimArray !epfd (MutablePrimArray evs) !maxEvents =
-  c_epoll_wait epfd evs maxEvents 0 >>= errorsFromInt
+  c_epoll_wait_unsafe epfd evs maxEvents 0 >>= errorsFromInt
 
+-- | Wait for an I/O event on an epoll file descriptor. The
+--   <https://linux.die.net/man/2/epoll_wait Linux man page>
+--   includes more details. The event buffer must be a pinned
+--   byte array.
 waitMutablePrimArray ::
      Fd -- ^ EPoll file descriptor
-  -> MutablePrimArray RealWorld (Event 'Response a) -- ^ Event buffer
+  -> MutablePrimArray RealWorld (Event 'Response a) -- ^ Event buffer, must be pinned
   -> CInt -- ^ Maximum events
   -> CInt -- ^ Timeout in milliseconds, use @-1@ to block forever.
   -> IO (Either Errno CInt) -- ^ Number of events received
-waitMutablePrimArray !epfd (MutablePrimArray evs) !maxEvents !timeout =
-  c_epoll_wait_safe epfd evs maxEvents timeout >>= errorsFromInt
+{-# inline waitMutablePrimArray #-}
+waitMutablePrimArray !epfd !evs !maxEvents !timeout =
+  let !(MutablePrimArray evs#) = assertMutablePrimArrayPinned evs
+   in c_epoll_wait_safe epfd evs# maxEvents timeout >>= errorsFromInt
 
 -- | Add, modify, or remove entries in the interest list of the
 --   epoll instance referred to by the file descriptor @epfd@.
@@ -135,16 +146,19 @@ uninterruptibleControlMutablePrimArray ::
   -> MutablePrimArray RealWorld (Event 'Request a)
      -- ^ A single event. This is read from, not written to.
   -> IO (Either Errno ())
+{-# inline uninterruptibleControlMutablePrimArray #-}
 uninterruptibleControlMutablePrimArray !epfd !op !fd (MutablePrimArray ev) =
-  c_epoll_ctl epfd op fd ev >>= errorsFromInt_
+  c_epoll_ctl_unsafe epfd op fd ev >>= errorsFromInt_
 
 errorsFromFd :: Fd -> IO (Either Errno Fd)
+{-# inline errorsFromFd #-}
 errorsFromFd r = if r > (-1)
   then pure (Right r)
   else fmap Left getErrno
 
 errorsFromInt :: CInt -> IO (Either Errno CInt)
-errorsFromInt r = if r >= 0
+{-# inline errorsFromInt #-}
+errorsFromInt r = if r > (-1)
   then pure (Right r)
   else fmap Left getErrno
 
@@ -152,6 +166,7 @@ errorsFromInt r = if r >= 0
 -- success and negative one to indicate failure without including
 -- additional information in the value.
 errorsFromInt_ :: CInt -> IO (Either Errno ())
+{-# inline errorsFromInt_ #-}
 errorsFromInt_ r = if r == 0
   then pure (Right ())
   else fmap Left getErrno

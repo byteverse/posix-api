@@ -71,6 +71,11 @@ extra-source-files:
   include/HaskellPosix.h
   include/custom.h
 
+flag assertions
+  manual: True
+  description: Extra run-time invariant checking 
+  default: False
+
 library
   exposed-modules:
     Linux.Epoll
@@ -86,10 +91,15 @@ library
     Posix.Poll.Types
     Posix.Socket.Platform
     Posix.Socket.Types
+    Assertion
   build-depends:
     , base >=4.11.1 && <5
     , primitive-checked >= 0.6.4
   hs-source-dirs: src
+  if flag(assertions)
+    hs-source-dirs: src-assertions
+  else
+    hs-source-dirs: src-noassertions
   if os(linux)
     hs-source-dirs: src-linux
   default-language: Haskell2010

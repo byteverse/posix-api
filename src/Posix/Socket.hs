@@ -4,6 +4,7 @@
 {-# language KindSignatures #-}
 {-# language LambdaCase #-}
 {-# language MagicHash #-}
+{-# language NamedFieldPuns #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnboxedTuples #-}
 {-# language UnliftedFFITypes #-}
@@ -63,6 +64,8 @@ module Posix.Socket
     -- ** Send To
   , uninterruptibleSendToByteArray
   , uninterruptibleSendToMutableByteArray
+  , uninterruptibleSendToInternetByteArray
+  , uninterruptibleSendToInternetMutableByteArray
     -- ** Write Vector
   , writeVector
     -- ** Receive
@@ -181,6 +184,7 @@ import GHC.Exts (Addr#,TYPE,RuntimeRep(UnliftedRep))
 import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
+import Posix.Socket.Types (SocketAddressInternet(..))
 import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
 import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
 import System.Posix.Types (Fd(..),CSsize(..))
@@ -303,6 +307,10 @@ foreign import ccall unsafe "sys/socket.h sendto_offset"
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
   c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
+foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
+  c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
+foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
+  c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 
 foreign import ccall safe "sys/uio.h writev"
   c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
@@ -739,8 +747,23 @@ uninterruptibleSendToByteArray ::
 uninterruptibleSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
   c_unsafe_bytearray_sendto fd b off len flags a# (intToCInt (PM.sizeofByteArray a)) >>= errorsFromSize
 
+-- | Variant of 'uninterruptibleSendToByteArray' that requires
+--   that @sockaddr_in@ be used as the socket address. This is used to
+--   avoid allocating a buffer for the socket address when the caller
+--   knows in advance that they are sending to an IPv4 address.
+uninterruptibleSendToInternetByteArray ::
+     Fd -- ^ Socket
+  -> ByteArray -- ^ Source byte array
+  -> CInt -- ^ Offset into source array
+  -> CSize -- ^ Length in bytes
+  -> MessageFlags 'Send -- ^ Flags
+  -> SocketAddressInternet -- ^ Socket Address
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+uninterruptibleSendToInternetByteArray fd (ByteArray b) off len flags (SocketAddressInternet{port,address}) =
+  c_unsafe_bytearray_sendto_inet fd b off len flags port address >>= errorsFromSize
+
 -- | Send data from a mutable byte array over an unconnected network socket.
---   This uses the unsafe FFI; considerations pertaining to 'sendToUnsafe'
+--   This uses the unsafe FFI; concerns pertaining to 'uninterruptibleSend'
 --   apply to this function as well. The offset and length arguments
 --   cause a slice of the mutable byte array to be sent rather than the entire
 --   byte array.
@@ -754,6 +777,21 @@ uninterruptibleSendToMutableByteArray ::
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
 uninterruptibleSendToMutableByteArray fd (MutableByteArray b) off len flags (SocketAddress a@(ByteArray a#)) =
   c_unsafe_mutable_bytearray_sendto fd b off len flags a# (intToCInt (PM.sizeofByteArray a)) >>= errorsFromSize
+
+-- | Variant of 'uninterruptibleSendToMutableByteArray' that requires
+--   that @sockaddr_in@ be used as the socket address. This is used to
+--   avoid allocating a buffer for the socket address when the caller
+--   knows in advance that they are sending to an IPv4 address.
+uninterruptibleSendToInternetMutableByteArray ::
+     Fd -- ^ Socket
+  -> MutableByteArray RealWorld -- ^ Source byte array
+  -> CInt -- ^ Offset into source array
+  -> CSize -- ^ Length in bytes
+  -> MessageFlags 'Send -- ^ Flags
+  -> SocketAddressInternet -- ^ Socket Address
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+uninterruptibleSendToInternetMutableByteArray fd (MutableByteArray b) off len flags (SocketAddressInternet{port,address}) =
+  c_unsafe_mutable_bytearray_sendto_inet fd b off len flags port address >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This wraps @recv@ using
 --   the safe FFI. When the returned size is zero, there are no

@@ -190,6 +190,10 @@ testLinuxSocketsB = do
   when (expectedSzB /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket B")
   (0,sabytesB <> sabytesB,5,E.fromList [sample,sample2]) @=? actual
 
+-- This test opens two datagram sockets and send a message from each
+-- one to the other. Then it checks that epoll's event-triggered
+-- interface correctly notifies the user about the read-readiness
+-- that has happened.
 testLinuxEpollA :: Assertion
 testLinuxEpollA = do
   (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
@@ -200,19 +204,35 @@ testLinuxEpollA = do
     , Epoll.payload = a
     }
   demand =<< Epoll.uninterruptibleControlMutablePrimArray epfd Epoll.add a reg
-  _ <- forkIO $ do
-    threadWaitWrite b
-    bytesSent <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
-    when (bytesSent /= 5) (fail "testLinuxEpollA: bytesSent was wrong")
-  evs <- PM.newPrimArray 2
+  PM.writePrimArray reg 0 $ Epoll.Event
+    { Epoll.events = Epoll.input <> Epoll.edgeTriggered
+    , Epoll.payload = b
+    }
+  demand =<< Epoll.uninterruptibleControlMutablePrimArray epfd Epoll.add b reg
+  threadWaitWrite b
+  bytesSentB <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
+  when (bytesSentB /= 5) (fail "testLinuxEpollA: bytesSentB was wrong")
+  threadWaitWrite a
+  bytesSentA <- demand =<< S.uninterruptibleSendByteArray a sample 0 5 mempty
+  when (bytesSentA /= 5) (fail "testLinuxEpollA: bytesSentA was wrong")
+  evs <- PM.newPrimArray 3
   loadGarbage evs
-  evCount <- demand =<< Epoll.waitMutablePrimArray epfd evs 2 (-1)
-  when (evCount /= 1) (fail ("testLinuxEpollA: evCount was " ++ show evCount))
-  Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 0
-  when (payload /= a) (fail ("testLinuxEpollA: payload was " ++ show payload))
+  evCount <- demand =<< Epoll.waitMutablePrimArray epfd evs 3 (-1)
+  when (evCount /= 2) (fail ("testLinuxEpollA: evCount was " ++ show evCount))
+  r <- case () of
+    _ -> do
+      Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 0
+      when (payload /= a && payload /= b) (fail ("testLinuxEpollA: payload x was " ++ show payload))
+      let Epoll.Events e = events
+      when (not (Epoll.containsEvents events Epoll.input)) $ do
+        fail ("testLinuxEpollA: events x bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
+      pure payload
+  Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 1
+  when (payload == r) (fail ("testLinuxEpollA: same payload " ++ show payload ++ " for both events"))
+  when (payload /= a && payload /= b) (fail ("testLinuxEpollA: payload y was " ++ show payload))
   let Epoll.Events e = events
   when (not (Epoll.containsEvents events Epoll.input)) $ do
-    fail ("testLinuxEpollA: events bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
+    fail ("testLinuxEpollA: events y bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
   pure ()
 
 binChar :: Int -> Char

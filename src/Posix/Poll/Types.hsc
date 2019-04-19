@@ -11,6 +11,7 @@
 {-# language MagicHash #-}
 {-# language UnboxedTuples #-}
 {-# language PolyKinds #-}
+{-# language TypeInType #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
 -- promoted data constructors correctly.

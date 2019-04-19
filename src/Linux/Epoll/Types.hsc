@@ -5,13 +5,14 @@
 {-# language DuplicateRecordFields #-}
 {-# language GADTSyntax #-}
 {-# language GeneralizedNewtypeDeriving #-}
-{-# language MagicHash #-}
 {-# language KindSignatures #-}
+{-# language MagicHash #-}
+{-# language NamedFieldPuns #-}
 {-# language PolyKinds #-}
 {-# language ScopedTypeVariables #-}
 {-# language TypeApplications #-}
+{-# language TypeInType #-}
 {-# language UnboxedTuples #-}
-{-# language NamedFieldPuns #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
 -- promoted data constructors correctly.
@@ -44,7 +45,8 @@ module Linux.Epoll.Types
   , error
   , edgeTriggered
     -- * Events Combinators
-  , containsEvents
+  , containsAnyEvents
+  , containsAllEvents
     -- * Marshalling
   , sizeofEvent
   , peekEventEvents
@@ -279,8 +281,12 @@ edgeTriggered = Events #{const EPOLLET}
 
 -- | Does the first event set entirely contain the second one? That is,
 -- is the second argument a subset of the first?
-containsEvents :: Events e -> Events e -> Bool
-containsEvents (Events a) (Events b) = a .&. b == b
+containsAllEvents :: Events e -> Events e -> Bool
+containsAllEvents (Events a) (Events b) = a .&. b == b
+
+-- | Does the first event set contain any of the events from the second one?
+containsAnyEvents :: Events e -> Events e -> Bool
+containsAnyEvents (Events a) (Events b) = (a .&. b) /= 0
 
 sizeofEvent :: Int
 sizeofEvent = #{size struct epoll_event}
