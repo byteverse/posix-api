@@ -9,6 +9,7 @@ module Linux.Socket
   ( -- * Functions
     uninterruptibleReceiveMultipleMessageA
   , uninterruptibleReceiveMultipleMessageB
+  , uninterruptibleAccept4
     -- * Types
   , SocketFlags(..)
     -- * Option Names
@@ -54,9 +55,10 @@ import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayAr
 import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
-import Posix.Socket (Type(..),MessageFlags(..),Message(Receive))
+import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
+import qualified Posix.Socket
 import qualified Data.Primitive as PM
 import qualified Control.Monad.Primitive as PM
 import qualified Posix.Socket as S
@@ -69,6 +71,13 @@ foreign import ccall unsafe "sys/socket.h recvmmsg"
                          -> MessageFlags 'Receive
                          -> Addr# -- Timeout
                          -> IO CSsize
+
+foreign import ccall unsafe "sys/socket.h accept4"
+  c_unsafe_accept4 :: Fd
+                   -> MutableByteArray# RealWorld -- SocketAddress
+                   -> MutableByteArray# RealWorld -- Ptr CInt
+                   -> SocketFlags
+                   -> IO Fd
 
 -- | Linux extends the @type@ argument of
 --   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
@@ -282,6 +291,29 @@ pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do
 shrinkMutableByteArray :: MutableByteArray RealWorld -> Int -> IO ()
 shrinkMutableByteArray (MutableByteArray arr) (I# sz) =
   PM.primitive_ (shrinkMutableByteArray# arr sz)
+
+-- | Variant of 'Posix.Socket.uninterruptibleAccept' that allows setting
+--   flags on the newly-accepted connection.
+uninterruptibleAccept4 ::
+     Fd -- ^ Listening socket
+  -> CInt -- ^ Maximum socket address size
+  -> SocketFlags -- ^ Set non-blocking and close-on-exec without extra syscall
+  -> IO (Either Errno (CInt,SocketAddress,Fd)) -- ^ Peer information and connected socket
+{-# inline uninterruptibleAccept4 #-}
+uninterruptibleAccept4 !sock !maxSz !flags = do
+  sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
+  lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
+  PM.writeByteArray lenBuf 0 maxSz
+  r <- c_unsafe_accept4 sock sockAddrBuf# lenBuf# flags
+  if r > (-1)
+    then do
+      (sz :: CInt) <- PM.readByteArray lenBuf 0
+      if sz < maxSz
+        then shrinkMutableByteArray sockAddrBuf (cintToInt sz)
+        else pure ()
+      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
+      pure (Right (sz,SocketAddress sockAddr,r))
+    else fmap Left getErrno
 
 cintToInt :: CInt -> Int
 cintToInt = fromIntegral
