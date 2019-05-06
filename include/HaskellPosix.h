@@ -11,4 +11,12 @@ ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t le
 
 int setsockopt_int(int socket, int level, int option_name, int option_value);
 
+int recvmmsg_sockaddrs
+  ( int sockfd
+  , int *lens // used for output
+  , struct sockaddr_in *addrs // used for output
+  , StgMutArrPtrs *arr // used for output
+  , unsigned int vlen
+  , int flags
+  );
 

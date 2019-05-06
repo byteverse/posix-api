@@ -14,8 +14,6 @@
 #include <arpa/inet.h>
 #include "custom.h"
 
--- | All of the data constructors provided by this module are unsafe.
---   Only use them if you really know what you are doing.
 module Posix.Socket.Platform
   ( -- * Encoding Socket Addresses
     encodeSocketAddressInternet

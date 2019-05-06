@@ -3,6 +3,7 @@
 {-# language LambdaCase #-}
 {-# language NamedFieldPuns #-}
 {-# language ScopedTypeVariables #-}
+{-# language TypeApplications #-}
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent (threadWaitRead,threadWaitWrite)
@@ -43,6 +44,7 @@ tests = testGroup "tests"
     [ testGroup "sockets"
       [ testCase "A" testLinuxSocketsA
       , testCase "B" testLinuxSocketsB
+      , testCase "C" testLinuxSocketsC
       ]
     , testGroup "epoll"
       [ testCase "A" testLinuxEpollA
@@ -171,24 +173,87 @@ testLinuxSocketsB :: Assertion
 testLinuxSocketsB = do
   a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
-  (expectedSzA,expectedSockAddrA) <- demand =<< S.uninterruptibleGetSocketName a 128
-  when (expectedSzA /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket A")
+  (expectedSzA,expectedSockAddrA) <- demand
+    =<< S.uninterruptibleGetSocketName a 128
+  when (expectedSzA /= S.sizeofSocketAddressInternet)
+    (fail "testLinixSocketsB: bad socket address size for socket A")
   portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
     Nothing -> fail "testLinixSocketsB: not a sockaddr_in"
     Just (S.SocketAddressInternet {S.port}) -> pure port
   b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
-  demand =<< S.uninterruptibleBind b (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  demand =<< S.uninterruptibleBind b
+    (S.encodeSocketAddressInternet $ S.SocketAddressInternet
+      { S.port = 0
+      , S.address = localhost
+      }
+    )
   threadWaitWrite b
-  bytesSent1 <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
-  when (bytesSent1 /= 5) (fail "testLinixSocketsB: bytesSent1 was wrong")
+  bytesSent1 <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty
+    (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent1 /= 5)
+    (fail "testLinixSocketsB: bytesSent1 was wrong")
   threadWaitWrite b
-  bytesSent2 <- demand =<< S.uninterruptibleSendToByteArray b sample2 0 4 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
-  when (bytesSent2 /= 4) (fail "testLinixSocketsB: bytesSent2 was wrong")
+  bytesSent2 <- demand =<< S.uninterruptibleSendToByteArray b sample2 0 4 mempty
+    (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent2 /= 4)
+    (fail "testLinixSocketsB: bytesSent2 was wrong")
   threadWaitRead a
-  actual <- demand =<< L.uninterruptibleReceiveMultipleMessageB a S.sizeofSocketAddressInternet 6 3 L.dontWait
+  actual <- demand
+    =<< L.uninterruptibleReceiveMultipleMessageB a S.sizeofSocketAddressInternet 6 3 L.dontWait
   (expectedSzB,S.SocketAddress sabytesB) <- demand =<< S.uninterruptibleGetSocketName b 128
-  when (expectedSzB /= S.sizeofSocketAddressInternet) (fail "testLinixSocketsB: bad socket address size for socket B")
+  when (expectedSzB /= S.sizeofSocketAddressInternet)
+    (fail "testLinixSocketsB: bad socket address size for socket B")
   (0,sabytesB <> sabytesB,5,E.fromList [sample,sample2]) @=? actual
+
+testLinuxSocketsC :: Assertion
+testLinuxSocketsC = do
+  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
+  (expectedSzA,expectedSockAddrA) <- demand
+    =<< S.uninterruptibleGetSocketName a 128
+  when (expectedSzA /= S.sizeofSocketAddressInternet)
+    (fail "testLinuxSocketsC: bad socket address size for socket A")
+  portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
+    Nothing -> fail "testLinuxSocketsC: not a sockaddr_in"
+    Just (S.SocketAddressInternet {S.port}) -> pure port
+  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  demand =<< S.uninterruptibleBind b
+    (S.encodeSocketAddressInternet $ S.SocketAddressInternet
+      { S.port = 0
+      , S.address = localhost
+      }
+    )
+  threadWaitWrite b
+  bytesSent1 <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty
+    (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent1 /= 5)
+    (fail "testLinuxSocketsC: bytesSent1 was wrong")
+  threadWaitWrite b
+  bytesSent2 <- demand =<< S.uninterruptibleSendToByteArray b sample2 0 4 mempty
+    (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
+  when (bytesSent2 /= 4)
+    (fail "testLinuxSocketsC: bytesSent2 was wrong")
+  threadWaitRead a
+  lens <- PM.newPrimArray 2
+  addrs <- PM.newPrimArray 2
+  payloadsMut <- PM.unsafeNewUnliftedArray 2
+  PM.newByteArray 6 >>= PM.writeUnliftedArray payloadsMut 0
+  PM.newByteArray 6 >>= PM.writeUnliftedArray payloadsMut 1
+  payloads <- PM.unsafeFreezeUnliftedArray payloadsMut
+  msgCount <- demand =<< L.uninterruptibleReceiveMultipleMessageC a lens addrs payloads 2 L.dontWait
+  when (msgCount /= 2) (fail "wrong number of messages")
+  addrsFrozen <- PM.unsafeFreezePrimArray addrs
+  len0 <- PM.readPrimArray lens 0
+  len1 <- PM.readPrimArray lens 1
+  buf0 <- PM.unsafeFreezeByteArray
+    =<< PM.resizeMutableByteArray (PM.indexUnliftedArray payloads 0) (fromIntegral @CInt @Int len0)
+  buf1 <- PM.unsafeFreezeByteArray
+    =<< PM.resizeMutableByteArray (PM.indexUnliftedArray payloads 1) (fromIntegral @CInt @Int len1)
+  (expectedSzB,S.SocketAddress sabytesB) <- demand =<< S.uninterruptibleGetSocketName b 128
+  when (expectedSzB /= S.sizeofSocketAddressInternet)
+    (fail "testLinuxSocketsC: bad socket address size for socket B")
+  let primSockAddr = case sabytesB of PM.ByteArray x -> PM.PrimArray x
+  (primSockAddr <> primSockAddr,E.fromList [sample,sample2]) @=? (addrsFrozen,[buf0,buf1])
 
 -- This test opens two datagram sockets and send a message from each
 -- one to the other. Then it checks that epoll's event-triggered
@@ -224,14 +289,14 @@ testLinuxEpollA = do
       Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 0
       when (payload /= a && payload /= b) (fail ("testLinuxEpollA: payload x was " ++ show payload))
       let Epoll.Events e = events
-      when (not (Epoll.containsEvents events Epoll.input)) $ do
+      when (not (Epoll.containsAnyEvents events Epoll.input)) $ do
         fail ("testLinuxEpollA: events x bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
       pure payload
   Epoll.Event{Epoll.events,Epoll.payload} <- PM.readPrimArray evs 1
   when (payload == r) (fail ("testLinuxEpollA: same payload " ++ show payload ++ " for both events"))
   when (payload /= a && payload /= b) (fail ("testLinuxEpollA: payload y was " ++ show payload))
   let Epoll.Events e = events
-  when (not (Epoll.containsEvents events Epoll.input)) $ do
+  when (not (Epoll.containsAnyEvents events Epoll.input)) $ do
     fail ("testLinuxEpollA: events y bitmask " ++ showIntAtBase 2 binChar e " missing EPOLLIN")
   pure ()
 

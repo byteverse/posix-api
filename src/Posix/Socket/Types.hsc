@@ -4,6 +4,9 @@
 {-# language GADTSyntax #-}
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language KindSignatures #-}
+{-# language MagicHash #-}
+{-# language UnboxedTuples #-}
+{-# language NamedFieldPuns #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
 -- promoted data constructors correctly.
@@ -11,6 +14,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "custom.h"
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
@@ -97,13 +101,15 @@ module Posix.Socket.Types
 import Prelude hiding (read)
 
 import Data.Bits (Bits,(.|.))
-import Data.Primitive (ByteArray,Addr(..))
+import Data.Primitive (ByteArray,Addr(..),Prim(..))
 import Data.Word (Word16,Word32,Word64)
 import Foreign.C.Types (CInt(..),CSize)
 import Foreign.Storable (peekByteOff,pokeByteOff)
 import GHC.Ptr (Ptr(..))
+import GHC.Exts (Int(I##),Int##,(*##),(+##))
 
 import qualified Data.Kind
+import qualified Data.Primitive as PM
 
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
@@ -167,9 +173,42 @@ newtype OptionValue = OptionValue ByteArray
 data SocketAddressInternet = SocketAddressInternet
   { port :: !Word16
   , address :: !Word32
-  }
+  } deriving (Eq,Show)
+
+-- | The index and read functions ignore @sin_family@. The write functions
+-- will set @sin_family@ to @AF_INET@.
+instance Prim SocketAddressInternet where
+  sizeOf## _ = unI #{size struct sockaddr_in}
+  alignment## _ = PM.alignment## (undefined :: Word)
+  indexByteArray## arr i = SocketAddressInternet
+    { port = #{indexByteArrayHash struct sockaddr_in, sin_port} arr i
+    , address = #{indexByteArrayHash struct sockaddr_in, sin_addr} arr i
+    }
+  indexOffAddr## arr i = SocketAddressInternet
+    { port = #{indexOffAddrHash struct sockaddr_in, sin_port} arr i
+    , address = #{indexOffAddrHash struct sockaddr_in, sin_addr} arr i
+    }
+  readByteArray## arr i s0 =
+    case #{readByteArrayHash struct sockaddr_in, sin_port} arr i s0 of
+      (## s1, port ##) -> case #{readByteArrayHash struct sockaddr_in, sin_addr} arr i s1 of
+        (## s2, address ##) -> (## s2, SocketAddressInternet{port,address} ##)
+  readOffAddr## arr i s0 =
+    case #{readOffAddrHash struct sockaddr_in, sin_port} arr i s0 of
+      (## s1, port ##) -> case #{readOffAddrHash struct sockaddr_in, sin_addr} arr i s1 of
+        (## s2, address ##) -> (## s2, SocketAddressInternet{port,address} ##)
+  writeByteArray## arr i SocketAddressInternet{port,address} s0 =
+    case #{writeByteArrayHash struct sockaddr_in, sin_family} arr i (#{const AF_INET} :: #{type sa_family_t}) s0 of
+      s1 -> case #{writeByteArrayHash struct sockaddr_in, sin_port} arr i port s1 of
+        s2 -> #{writeByteArrayHash struct sockaddr_in, sin_addr} arr i address s2
+  writeOffAddr## arr i SocketAddressInternet{port,address} s0 =
+    case #{writeOffAddrHash struct sockaddr_in, sin_family} arr i (#{const AF_INET} :: #{type sa_family_t}) s0 of
+      s1 -> case #{writeOffAddrHash struct sockaddr_in, sin_port} arr i port s1 of
+        s2 -> #{writeOffAddrHash struct sockaddr_in, sin_addr} arr i address s2
+  setByteArray## = PM.defaultSetByteArray##
+  setOffAddr## = PM.defaultSetOffAddr##
 
 -- Revisit this. We really need a standard Word128 type somewhere.
+-- Solution: use the wideword package.
 data SocketAddressInternet6 = SocketAddressInternet6
   { port :: !Word16
   , flowInfo :: !Word32
@@ -394,4 +433,7 @@ peekMessageHeaderFlags :: Addr -> IO (MessageFlags Receive)
 peekMessageHeaderFlags (Addr p) = do
   i <- #{peek struct msghdr, msg_flags} (Ptr p)
   pure (MessageFlags i)
+
+unI :: Int -> Int##
+unI (I## i) = i
 

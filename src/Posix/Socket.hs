@@ -309,7 +309,7 @@ foreign import ccall unsafe "sys/socket.h sendto_offset"
   c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
 foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
   c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
-foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
+foreign import ccall unsafe "HaskellPosix.h sendto_inet_offset"
   c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 
 foreign import ccall safe "sys/uio.h writev"
@@ -874,6 +874,10 @@ uninterruptibleReceiveFromMutableByteArray ::
 -- want this to inline since inlining typically avoids the Left/Right
 -- data constructor allocation.
 uninterruptibleReceiveFromMutableByteArray !fd (MutableByteArray !b) !off !len !flags !maxSz = do
+  -- TODO: We currently allocate one buffer for the size and
+  -- one for the peer. We could improve this by allocating
+  -- a single buffer instead. We would need to add some
+  -- cleverness in the cbits directory.
   sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
   lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
   PM.writeByteArray lenBuf 0 maxSz
@@ -900,8 +904,6 @@ uninterruptibleReceiveFromMutableByteArray_ ::
   -> IO (Either Errno CSize) -- ^ Number of bytes received into array
 uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
-
-
 
 -- | Receive a message, scattering the input. This does not provide
 --   the socket address or the control messages. All of the chunks

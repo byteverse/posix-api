@@ -9,6 +9,7 @@ module Linux.Socket
   ( -- * Functions
     uninterruptibleReceiveMultipleMessageA
   , uninterruptibleReceiveMultipleMessageB
+  , uninterruptibleReceiveMultipleMessageC
   , uninterruptibleAccept4
     -- * Types
   , SocketFlags(..)
@@ -47,12 +48,12 @@ import Prelude hiding (truncate)
 
 import Control.Monad (when)
 import Data.Bits ((.|.))
-import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..))
+import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..),MutablePrimArray(..))
 import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
 import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
-import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
+import GHC.Exts (MutableArrayArray#,ArrayArray#,shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
 import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
@@ -78,6 +79,16 @@ foreign import ccall unsafe "sys/socket.h accept4"
                    -> MutableByteArray# RealWorld -- Ptr CInt
                    -> SocketFlags
                    -> IO Fd
+
+foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
+  c_unsafe_recvmmsg_sockaddr_in ::
+       Fd
+    -> MutableByteArray# RealWorld -- lengths
+    -> MutableByteArray# RealWorld -- sockaddrs
+    -> ArrayArray# -- buffers
+    -> CUInt -- Length of msghdr array
+    -> MessageFlags 'Receive
+    -> IO CInt
 
 -- | Linux extends the @type@ argument of
 --   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
@@ -194,6 +205,17 @@ uninterruptibleReceiveMultipleMessageB !s !expSockAddrSize !msgSize !msgCount !f
       touchMutableByteArray sockaddrsBuf
       fmap Left getErrno
 
+-- | All three buffer arguments need to have the same length (in elements, not bytes).
+uninterruptibleReceiveMultipleMessageC ::
+     Fd -- ^ Socket
+  -> MutablePrimArray RealWorld CInt -- ^ Buffer for payload lengths
+  -> MutablePrimArray RealWorld S.SocketAddressInternet -- ^ Buffer for @sockaddr_in@s
+  -> UnliftedArray (MutableByteArray RealWorld) -- ^ Buffers for payloads
+  -> CUInt -- ^ Maximum number of datagrams to receive, length of buffers
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno CInt)
+uninterruptibleReceiveMultipleMessageC !s (MutablePrimArray lens) (MutablePrimArray addrs) (PM.UnliftedArray payloads) !msgCount !flags =
+  c_unsafe_recvmmsg_sockaddr_in s lens addrs payloads msgCount flags >>= errorsFromInt
 
 -- This sets up an array of mmsghdr. Each msghdr has msg_iov set to
 -- be an array of iovec with a single element.
@@ -326,6 +348,12 @@ csizeToInt = fromIntegral
 
 cssizeToInt :: CSsize -> Int
 cssizeToInt = fromIntegral
+
+errorsFromInt :: CInt -> IO (Either Errno CInt)
+{-# inline errorsFromInt #-}
+errorsFromInt r = if r > (-1)
+  then pure (Right r)
+  else fmap Left getErrno
 
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
 touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
