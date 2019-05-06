@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdint.h>
+#include "Rts.h"
 
 ssize_t recv_offset(int socket, char *buffer, int offset, size_t length, int flags);
 ssize_t send_offset(int socket, const char *buffer, int offset, size_t length, int flags);
@@ -11,12 +12,5 @@ ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t le
 
 int setsockopt_int(int socket, int level, int option_name, int option_value);
 
-int recvmmsg_sockaddrs
-  ( int sockfd
-  , int *lens // used for output
-  , struct sockaddr_in *addrs // used for output
-  , StgMutArrPtrs *arr // used for output
-  , unsigned int vlen
-  , int flags
-  );
+int recvmmsg_sockaddrs (int sockfd , int *lens , struct sockaddr_in *addrs , StgMutArrPtrs *arr , unsigned int vlen , int flags);
 
