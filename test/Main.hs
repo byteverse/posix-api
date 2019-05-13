@@ -239,10 +239,10 @@ testLinuxSocketsC = do
   payloadsMut <- PM.unsafeNewUnliftedArray 2
   PM.newByteArray 6 >>= PM.writeUnliftedArray payloadsMut 0
   PM.newByteArray 6 >>= PM.writeUnliftedArray payloadsMut 1
-  payloads <- PM.unsafeFreezeUnliftedArray payloadsMut
-  msgCount <- demand =<< L.uninterruptibleReceiveMultipleMessageC a lens addrs payloads 2 L.dontWait
+  msgCount <- demand =<< L.uninterruptibleReceiveMultipleMessageC a lens addrs payloadsMut 2 L.dontWait
   when (msgCount /= 2) (fail "wrong number of messages")
   addrsFrozen <- PM.unsafeFreezePrimArray addrs
+  payloads <- PM.unsafeFreezeUnliftedArray payloadsMut
   len0 <- PM.readPrimArray lens 0
   len1 <- PM.readPrimArray lens 1
   buf0 <- PM.unsafeFreezeByteArray

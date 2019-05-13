@@ -10,6 +10,7 @@ module Linux.Socket
     uninterruptibleReceiveMultipleMessageA
   , uninterruptibleReceiveMultipleMessageB
   , uninterruptibleReceiveMultipleMessageC
+  , uninterruptibleReceiveMultipleMessageD
   , uninterruptibleAccept4
     -- * Types
   , SocketFlags(..)
@@ -85,7 +86,16 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
        Fd
     -> MutableByteArray# RealWorld -- lengths
     -> MutableByteArray# RealWorld -- sockaddrs
-    -> ArrayArray# -- buffers
+    -> MutableArrayArray# RealWorld -- buffers
+    -> CUInt -- Length of msghdr array
+    -> MessageFlags 'Receive
+    -> IO CInt
+
+foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_discard"
+  c_unsafe_recvmmsg_sockaddr_discard ::
+       Fd
+    -> MutableByteArray# RealWorld -- lengths
+    -> MutableArrayArray# RealWorld -- buffers
     -> CUInt -- Length of msghdr array
     -> MessageFlags 'Receive
     -> IO CInt
@@ -210,12 +220,24 @@ uninterruptibleReceiveMultipleMessageC ::
      Fd -- ^ Socket
   -> MutablePrimArray RealWorld CInt -- ^ Buffer for payload lengths
   -> MutablePrimArray RealWorld S.SocketAddressInternet -- ^ Buffer for @sockaddr_in@s
-  -> UnliftedArray (MutableByteArray RealWorld) -- ^ Buffers for payloads
+  -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld) -- ^ Buffers for payloads
   -> CUInt -- ^ Maximum number of datagrams to receive, length of buffers
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CInt)
-uninterruptibleReceiveMultipleMessageC !s (MutablePrimArray lens) (MutablePrimArray addrs) (PM.UnliftedArray payloads) !msgCount !flags =
+uninterruptibleReceiveMultipleMessageC !s (MutablePrimArray lens) (MutablePrimArray addrs) (PM.MutableUnliftedArray payloads) !msgCount !flags =
   c_unsafe_recvmmsg_sockaddr_in s lens addrs payloads msgCount flags >>= errorsFromInt
+
+-- | All three buffer arguments need to have the same length (in elements, not bytes).
+-- This discards the source addresses.
+uninterruptibleReceiveMultipleMessageD ::
+     Fd -- ^ Socket
+  -> MutablePrimArray RealWorld CInt -- ^ Buffer for payload lengths
+  -> MutableUnliftedArray RealWorld (MutableByteArray RealWorld) -- ^ Buffers for payloads
+  -> CUInt -- ^ Maximum number of datagrams to receive, length of buffers
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno CInt)
+uninterruptibleReceiveMultipleMessageD !s (MutablePrimArray lens) (PM.MutableUnliftedArray payloads) !msgCount !flags =
+  c_unsafe_recvmmsg_sockaddr_discard s lens payloads msgCount flags >>= errorsFromInt
 
 -- This sets up an array of mmsghdr. Each msghdr has msg_iov set to
 -- be an array of iovec with a single element.

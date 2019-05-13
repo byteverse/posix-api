@@ -12,5 +12,6 @@ ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t le
 
 int setsockopt_int(int socket, int level, int option_name, int option_value);
 
-int recvmmsg_sockaddrs (int sockfd , int *lens , struct sockaddr_in *addrs , StgMutArrPtrs *arr , unsigned int vlen , int flags);
+int recvmmsg_sockaddr_in (int sockfd , int *lens , struct sockaddr_in *addrs , StgMutArrPtrs *arr , unsigned int vlen , int flags);
+int recvmmsg_sockaddr_discard (int sockfd , int *lens , StgMutArrPtrs *arr , unsigned int vlen , int flags);
 

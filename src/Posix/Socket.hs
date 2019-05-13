@@ -468,7 +468,6 @@ accept !sock !maxSz = do
       x <- PM.newByteArray (cintToInt minSz)
       PM.copyMutableByteArray x 0 sockAddrBuf 0 (cintToInt minSz)
       sockAddr <- PM.unsafeFreezeByteArray x
-      -- sockAddr <- PM.unsafeFreezeByteArray =<< PM.resizeMutableByteArray sockAddrBuf (cintToInt sz)
       pure (Right (sz,SocketAddress sockAddr,r))
     else fmap Left getErrno
 
@@ -840,6 +839,7 @@ uninterruptibleReceive ::
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize)
+{-# inline uninterruptibleReceive #-}
 uninterruptibleReceive !fd (Addr !addr) !len !flags =
   c_unsafe_addr_recv fd addr len flags >>= errorsFromSize
 
@@ -854,6 +854,7 @@ uninterruptibleReceiveMutableByteArray ::
   -> CSize -- ^ Maximum bytes to receive
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Bytes received into array
+{-# inline uninterruptibleReceiveMutableByteArray #-}
 uninterruptibleReceiveMutableByteArray !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_recv fd b off len flags >>= errorsFromSize
 
@@ -869,7 +870,7 @@ uninterruptibleReceiveFromMutableByteArray ::
   -> CInt -- ^ Maximum socket address size
   -> IO (Either Errno (CInt,SocketAddress,CSize))
      -- ^ Remote host, bytes received into array, bytes needed for @addrlen@.
-{-# INLINE uninterruptibleReceiveFromMutableByteArray #-}
+{-# inline uninterruptibleReceiveFromMutableByteArray #-}
 -- GHC does not inline this unless we give it the pragma. We really
 -- want this to inline since inlining typically avoids the Left/Right
 -- data constructor allocation.
@@ -902,6 +903,7 @@ uninterruptibleReceiveFromMutableByteArray_ ::
   -> CSize -- ^ Maximum bytes to receive
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes received into array
+{-# inline uninterruptibleReceiveFromMutableByteArray_ #-}
 uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
   c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
 
