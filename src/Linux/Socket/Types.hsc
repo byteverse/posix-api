@@ -113,7 +113,7 @@ dontWait = MessageFlags #{const MSG_DONTWAIT}
 
 -- | The @MSG_TRUNC@ receive flag.
 truncate :: MessageFlags Receive
-truncate = MessageFlags #{const MSG_DONTWAIT}
+truncate = MessageFlags #{const MSG_TRUNC}
 
 -- | The @MSG_CTRUNC@ receive flag.
 controlTruncate :: MessageFlags Receive
