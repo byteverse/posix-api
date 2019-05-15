@@ -76,6 +76,7 @@ module Posix.Socket
     -- ** Receive From
   , uninterruptibleReceiveFromMutableByteArray
   , uninterruptibleReceiveFromMutableByteArray_
+  , uninterruptibleReceiveFromInternetMutableByteArray
     -- ** Receive Message
     -- $receiveMessage
   , uninterruptibleReceiveMessageA
@@ -174,6 +175,8 @@ import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
 import Data.Primitive (MutableUnliftedArray(..),UnliftedArray(..))
+import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
+import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
 import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
@@ -327,7 +330,19 @@ foreign import ccall unsafe "sys/socket.h recv_offset"
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
   c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
-  c_unsafe_mutable_byte_array_ptr_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
+  c_unsafe_mutable_byte_array_ptr_recvfrom ::
+       Fd -> MutableByteArray# RealWorld -> CInt -> CSize
+    -> MessageFlags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
+foreign import ccall unsafe "sys/socket.h recvfrom_offset_inet"
+  c_unsafe_recvfrom_inet ::
+       Fd
+    -> MutableByteArray# RealWorld
+    -> Int
+    -> CSize
+    -> MessageFlags 'Receive
+    -> MutableByteArray# RealWorld
+    -> Int
+    -> IO CSsize
 
 foreign import ccall unsafe "sys/socket.h recvmsg"
   c_unsafe_addr_recvmsg :: Fd
@@ -892,6 +907,20 @@ uninterruptibleReceiveFromMutableByteArray !fd (MutableByteArray !b) !off !len !
       sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
       pure (Right (sz,SocketAddress sockAddr,cssizeToCSize r))
     else fmap Left getErrno
+
+uninterruptibleReceiveFromInternetMutableByteArray ::
+     Fd -- ^ Socket
+  -> MutableByteArrayOffset RealWorld -- ^ Destination byte array
+  -> CSize -- ^ Maximum bytes to receive
+  -> MessageFlags 'Receive -- ^ Flags
+  -> MutablePrimArrayOffset RealWorld SocketAddressInternet -- ^ Address
+  -> IO (Either Errno CSize) -- ^ Number of bytes received into array
+{-# inline uninterruptibleReceiveFromInternetMutableByteArray #-}
+uninterruptibleReceiveFromInternetMutableByteArray !fd
+  (MutableByteArrayOffset (MutableByteArray b) off) !len !flags
+  (MutablePrimArrayOffset (MutablePrimArray sockAddrBuf) addrOff) =
+    c_unsafe_recvfrom_inet fd b off len flags sockAddrBuf addrOff
+    >>= errorsFromSize
 
 -- | Receive data into an address from a network socket. This uses the unsafe
 --   FFI. This does not return the socket address of the remote host that

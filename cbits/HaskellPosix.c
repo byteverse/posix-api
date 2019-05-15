@@ -5,7 +5,14 @@
 #include <stdint.h>
 #include "HaskellPosix.h"
 #include "Rts.h"
-// #include "rts/storage/Closures.h"
+
+#ifdef __GNUC__
+#define likely(x)       __builtin_expect(!!(x), 1)
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+#else
+#define likely(x)       (x)
+#define unlikely(x)     (x)
+#endif
 
 // Generally, this library tries to avoid wrapping POSIX functions
 // in an additional function. However, for some functions whose wrappers
@@ -32,6 +39,26 @@ ssize_t sendto_inet_offset(int socket, const char *message, int offset, size_t l
 }
 ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict address_len) {
   return recvfrom(socket, (void*)(buffer + offset), length, flags, address, address_len);
+}
+ssize_t recvfrom_offset_inet
+  ( int socket
+  , char *restrict buffer_base
+  , HsInt offset
+  , size_t length
+  , int flags
+  , struct sockaddr_in *restrict addresses
+  , HsInt address_offset
+  ) {
+  void* buffer = (void*)(buffer_base + offset);
+  struct sockaddr_in* address = addresses + address_offset;
+  socklen_t address_len[1] = {sizeof(struct sockaddr_in)};
+  ssize_t r = recvfrom(socket, buffer, length, flags, address, address_len);
+  if (likely(address_len[0] == sizeof(struct sockaddr_in))) {
+    return r;
+  } else {
+    fprintf(stderr, "posix-api: recvfrom_offset_bufs");
+    exit(EXIT_FAILURE);
+  }
 }
 int setsockopt_int(int socket, int level, int option_name, int option_value) {
   return setsockopt(socket,level,option_name,&option_value,sizeof(int));

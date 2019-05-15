@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: posix-api
-version: 0.2.2.0
+version: 0.3.0.0
 synopsis: posix bindings
 description:
   This library provides a very thin wrapper around POSIX APIs. It can be
@@ -94,7 +94,8 @@ library
     Assertion
   build-depends:
     , base >=4.11.1 && <5
-    , primitive-checked >= 0.6.4
+    , primitive >= 0.6.4
+    , primitive-offset >= 0.1 && <0.2
   hs-source-dirs: src
   if flag(assertions)
     hs-source-dirs: src-assertions
