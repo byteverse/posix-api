@@ -38,7 +38,7 @@ import Prelude hiding (truncate,error)
 
 import Data.Bits ((.|.),(.&.))
 import Data.Word (Word8,Word16,Word32,Word64)
-import Data.Primitive (Prim(..),Addr(..))
+import Data.Primitive (Prim(..))
 import Foreign.C.Types (CInt(..),CShort)
 import Foreign.Storable (Storable(..))
 import GHC.Ptr (Ptr(..))

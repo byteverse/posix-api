@@ -49,19 +49,21 @@ import Prelude hiding (truncate)
 
 import Control.Monad (when)
 import Data.Bits ((.|.))
-import Data.Primitive (MutableByteArray(..),Addr(..),ByteArray(..),MutablePrimArray(..))
-import Data.Primitive (MutableUnliftedArray(..),UnliftedArray)
+import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
+import Data.Primitive (MutableByteArray(..),ByteArray(..),MutablePrimArray(..))
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray(..),UnliftedArray)
+import Data.Word (Word8)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
-import GHC.Exts (MutableArrayArray#,ArrayArray#,shrinkMutableByteArray#,touch#,nullAddr#)
+import GHC.Exts (Ptr(..),RealWorld,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
+import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
 import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
-import qualified Posix.Socket
 import qualified Data.Primitive as PM
+import qualified Data.Primitive.Unlifted.Array as PM
 import qualified Control.Monad.Primitive as PM
 import qualified Posix.Socket as S
 import qualified Linux.Socket.Types as LST
@@ -138,8 +140,8 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
   bufs <- PM.unsafeNewUnliftedArray (cuintToInt msgCount)
   mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
   iovecsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt S.sizeofIOVector)
-  let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = PM.mutableByteArrayContents mmsghdrsBuf
-  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = ptrToAddr (PM.mutableByteArrayContents mmsghdrsBuf)
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
   initializeMultipleMessageHeadersWithoutSockAddr bufs iovecsAddr mmsghdrsAddr msgSize msgCount
   r <- c_unsafe_addr_recvmmsg s mmsghdrsAddr# msgCount flags nullAddr#
   if r > (-1)
@@ -194,9 +196,9 @@ uninterruptibleReceiveMultipleMessageB !s !expSockAddrSize !msgSize !msgCount !f
   sockaddrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt expSockAddrSize)
   -- Linux does not require zeroing out sockaddr_in before using it,
   -- so we leave sockaddrsBuf alone after initialization.
-  let sockaddrsAddr = PM.mutableByteArrayContents sockaddrsBuf
-  let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = PM.mutableByteArrayContents mmsghdrsBuf
-  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  let sockaddrsAddr = ptrToAddr (PM.mutableByteArrayContents sockaddrsBuf)
+  let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = ptrToAddr (PM.mutableByteArrayContents mmsghdrsBuf)
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
   initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr mmsghdrsAddr sockaddrsAddr expSockAddrSize msgSize msgCount
   r <- c_unsafe_addr_recvmmsg s mmsghdrsAddr# msgCount flags nullAddr#
   if r > (-1)
@@ -251,9 +253,9 @@ initializeMultipleMessageHeadersWithoutSockAddr ::
 initializeMultipleMessageHeadersWithoutSockAddr bufs iovecsAddr mmsgHdrsAddr msgSize msgCount =
   let go !ix !iovecAddr !mmsgHdrAddr = if ix < cuintToInt msgCount
         then do
-          pokeMultipleMessageHeader mmsgHdrAddr PM.nullAddr 0 iovecAddr 1 PM.nullAddr 0 mempty 0
+          pokeMultipleMessageHeader mmsgHdrAddr nullAddr 0 iovecAddr 1 nullAddr 0 mempty 0
           initializeIOVector bufs iovecAddr msgSize ix
-          go (ix + 1) (PM.plusAddr iovecAddr (cintToInt S.sizeofIOVector)) (PM.plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
+          go (ix + 1) (plusAddr iovecAddr (cintToInt S.sizeofIOVector)) (plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
         else pure ()
    in go 0 iovecsAddr mmsgHdrsAddr
 
@@ -272,14 +274,17 @@ initializeMultipleMessageHeadersWithSockAddr ::
 initializeMultipleMessageHeadersWithSockAddr bufs iovecsAddr0 mmsgHdrsAddr0 sockaddrsAddr0 sockaddrSize msgSize msgCount =
   let go !ix !iovecAddr !mmsgHdrAddr !sockaddrAddr = if ix < cuintToInt msgCount
         then do
-          pokeMultipleMessageHeader mmsgHdrAddr sockaddrAddr sockaddrSize iovecAddr 1 PM.nullAddr 0 mempty 0
+          pokeMultipleMessageHeader mmsgHdrAddr sockaddrAddr sockaddrSize iovecAddr 1 nullAddr 0 mempty 0
           initializeIOVector bufs iovecAddr msgSize ix
           go (ix + 1)
-            (PM.plusAddr iovecAddr (cintToInt S.sizeofIOVector))
-            (PM.plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
-            (PM.plusAddr sockaddrAddr (cintToInt sockaddrSize))
+            (plusAddr iovecAddr (cintToInt S.sizeofIOVector))
+            (plusAddr mmsgHdrAddr (cintToInt LST.sizeofMultipleMessageHeader))
+            (plusAddr sockaddrAddr (cintToInt sockaddrSize))
         else pure ()
    in go 0 iovecsAddr0 mmsgHdrsAddr0 sockaddrsAddr0
+
+ptrToAddr :: Ptr Word8 -> Addr
+ptrToAddr (Ptr x) = Addr x
 
 -- Initialize a single iovec. We write the pinned byte array into
 -- both the iov_base field and into an unlifted array.
@@ -292,7 +297,7 @@ initializeIOVector ::
 initializeIOVector bufs iovecAddr msgSize ix = do
   buf <- PM.newPinnedByteArray (csizeToInt msgSize)
   PM.writeUnliftedArray bufs ix buf
-  S.pokeIOVectorBase iovecAddr (PM.mutableByteArrayContents buf)
+  S.pokeIOVectorBase iovecAddr (ptrToAddr (PM.mutableByteArrayContents buf))
   S.pokeIOVectorLength iovecAddr msgSize
 
 -- Freeze a slice of the mutable byte arrays inside the unlifted array,
@@ -316,7 +321,7 @@ shrinkAndFreezeMessages !bufSize !expSockAddrSize !n !bufs !mmsghdr0 = do
       when (cuintToInt sz < csizeToInt bufSize) (shrinkMutableByteArray buf (cuintToInt sz))
       PM.writeUnliftedArray r ix =<< PM.unsafeFreezeByteArray buf
       go r (validation .|. (sockaddrSz - expSockAddrSize)) (ix + 1) (max maxMsgSz sz)
-        (PM.plusAddr mmsghdr (cintToInt LST.sizeofMultipleMessageHeader))
+        (plusAddr mmsghdr (cintToInt LST.sizeofMultipleMessageHeader))
     else do
       a <- PM.unsafeFreezeUnliftedArray r
       pure (validation,maxMsgSz,a)

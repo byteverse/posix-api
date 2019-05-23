@@ -173,11 +173,12 @@ module Posix.Socket
 
 import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
-import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),Addr(..),ByteArray(..))
-import Data.Primitive (MutableUnliftedArray(..),UnliftedArray(..))
+import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
+import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),ByteArray(..))
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray(..),UnliftedArray(..))
 import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
 import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
-import Data.Word (Word16,Word32,byteSwap16,byteSwap32)
+import Data.Word (Word8,Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..))
@@ -194,6 +195,7 @@ import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
+import qualified Data.Primitive.Unlifted.Array as PM
 import qualified Control.Monad.Primitive as PM
 import qualified GHC.Exts as Exts
 
@@ -621,16 +623,16 @@ writeVector fd buffers = do
       Nothing -> do
         let buffer = buf
         let targetAddr :: Addr
-            targetAddr = PM.mutableByteArrayContents iovecs `PM.plusAddr`
+            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
               (i * cintToInt PST.sizeofIOVector)
-        PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
+        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
         PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
         pure newBufs
       Just buffer -> do
         let targetAddr :: Addr
-            targetAddr = PM.mutableByteArrayContents iovecs `PM.plusAddr`
+            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
               (i * cintToInt PST.sizeofIOVector)
-        PST.pokeIOVectorBase targetAddr (PM.byteArrayContents buffer)
+        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
         PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
         pure (UCons (unByteArray buffer) newBufs)
   r <- errorsFromSize =<<
@@ -829,7 +831,7 @@ receiveByteArray ::
   -> IO (Either Errno ByteArray)
 receiveByteArray !fd !len !flags = do
   m <- PM.newPinnedByteArray (csizeToInt len)
-  let !(Addr addr) = PM.mutableByteArrayContents m
+  let !(Addr addr) = ptrToAddr (PM.mutableByteArrayContents m)
   r <- c_safe_addr_recv fd addr len flags
   if r /= (-1)
     then do
@@ -949,11 +951,11 @@ uninterruptibleReceiveMessageA ::
 uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
   bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
   iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
-  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
   initializeIOVectors bufs iovecsAddr chunkSize chunkCount
   msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
-  let !msgHdrAddr@(Addr msgHdrAddr#) = PM.mutableByteArrayContents msgHdrBuf
-  pokeMessageHeader msgHdrAddr PM.nullAddr 0 iovecsAddr chunkCount PM.nullAddr 0 flags
+  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
+  pokeMessageHeader msgHdrAddr nullAddr 0 iovecsAddr chunkCount nullAddr 0 flags
   r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
   if r > (-1)
     then do
@@ -968,6 +970,9 @@ uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
       touchMutableByteArray iovecsBuf
       touchMutableByteArray msgHdrBuf
       fmap Left getErrno
+
+ptrToAddr :: Ptr Word8 -> Addr
+ptrToAddr (Exts.Ptr a) = Addr a
 
 -- | Receive a message, scattering the input. This provides the socket
 --   address but does not include control messages. All of the chunks
@@ -984,11 +989,13 @@ uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz =
   sockAddrBuf <- PM.newPinnedByteArray (cintToInt maxSockAddrSz)
   bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
   iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
-  let iovecsAddr = PM.mutableByteArrayContents iovecsBuf
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
   initializeIOVectors bufs iovecsAddr chunkSize chunkCount
   msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
-  let !msgHdrAddr@(Addr msgHdrAddr#) = PM.mutableByteArrayContents msgHdrBuf
-  pokeMessageHeader msgHdrAddr (PM.mutableByteArrayContents sockAddrBuf) maxSockAddrSz iovecsAddr chunkCount PM.nullAddr 0 flags
+  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
+  pokeMessageHeader msgHdrAddr
+    (ptrToAddr (PM.mutableByteArrayContents sockAddrBuf)) maxSockAddrSz iovecsAddr
+    chunkCount nullAddr 0 flags
   r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
   if r > (-1)
     then do
@@ -1140,7 +1147,7 @@ initializeIOVectors bufs iovecsAddr chunkSize chunkCount =
   let go !ix !iovecAddr = if ix < csizeToInt chunkCount
         then do
           initializeIOVector bufs iovecAddr chunkSize ix
-          go (ix + 1) (PM.plusAddr iovecAddr (cintToInt PST.sizeofIOVector))
+          go (ix + 1) (plusAddr iovecAddr (cintToInt PST.sizeofIOVector))
         else pure ()
    in go 0 iovecsAddr
 
@@ -1156,7 +1163,9 @@ initializeIOVector ::
 initializeIOVector bufs iovecAddr chunkSize ix = do
   buf <- PM.newPinnedByteArray (csizeToInt chunkSize)
   PM.writeUnliftedArray bufs ix buf
-  PST.pokeIOVectorBase iovecAddr (PM.mutableByteArrayContents buf)
+  let !(Exts.Ptr bufAddr#) = PM.mutableByteArrayContents buf
+      bufAddr = Addr bufAddr#
+  PST.pokeIOVectorBase iovecAddr bufAddr
   PST.pokeIOVectorLength iovecAddr chunkSize
 
 -- This is intended to be called on an array of iovec after recvmsg

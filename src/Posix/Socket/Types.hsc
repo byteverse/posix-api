@@ -101,7 +101,8 @@ module Posix.Socket.Types
 import Prelude hiding (read)
 
 import Data.Bits (Bits,(.|.))
-import Data.Primitive (ByteArray,Addr(..),Prim(..))
+import Data.Primitive (ByteArray,Prim(..))
+import Data.Primitive.Addr (Addr(..))
 import Data.Word (Word16,Word32,Word64)
 import Foreign.C.Types (CInt(..),CSize)
 import Foreign.Storable (peekByteOff,pokeByteOff)

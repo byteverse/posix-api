@@ -63,7 +63,8 @@ import Prelude hiding (truncate)
 
 import Data.Bits (Bits((.|.)),unsafeShiftL,unsafeShiftR)
 import Data.Word (Word8,Word16,Word32)
-import Data.Primitive (Addr(..),MutableByteArray,writeByteArray)
+import Data.Primitive.Addr (Addr(..),writeOffAddr)
+import Data.Primitive (MutableByteArray,writeByteArray)
 import Foreign.C.Types (CInt(..),CSize,CUInt)
 import Posix.Socket (MessageFlags(..),Message(Receive),OptionName(..))
 import Foreign.Storable (peekByteOff,pokeByteOff)
@@ -192,12 +193,10 @@ sizeofIpHeader = #{size struct iphdr}
 -- will marshal the value appropriately depending on the platform's
 -- bit-endianness.
 pokeIpHeaderVersionIhl :: Addr -> Word8 -> IO ()
--- TODO: Verify if this is correct.
+-- TODO: Verify if this is correct. Also, something bad is going
+-- on here. Fix this.
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-pokeIpHeaderVersionIhl p _ = PM.writeOffAddr p 0 (0b01000101 :: Word8)
-  -- PM.writeOffAddr p 0 (unsafeShiftL w 4 .|. unsafeShiftR w 4)
-  -- where
-  -- rev = 
+pokeIpHeaderVersionIhl p _ = writeOffAddr p 0 (0b01000101 :: Word8)
 #elif defined (__BIG_ENDIAN_BITFIELD)
 pokeIpHeaderVersionIhl p w = PM.writeOffAddr p 0 w
 #else

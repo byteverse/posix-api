@@ -94,8 +94,10 @@ library
     Assertion
   build-depends:
     , base >=4.11.1 && <5
-    , primitive >= 0.6.4
+    , primitive >= 0.7 && <0.8
+    , primitive-addr >= 0.1 && <0.2
     , primitive-offset >= 0.1 && <0.2
+    , primitive-unlifted >= 0.1 && <0.2
   hs-source-dirs: src
   if flag(assertions)
     hs-source-dirs: src-assertions

@@ -26,7 +26,8 @@ module Posix.Socket.Platform
   ) where
 
 import Control.Monad (when)
-import Data.Primitive (Addr,MutableByteArray,ByteArray(..),writeByteArray,indexByteArray)
+import Data.Primitive (MutableByteArray,ByteArray(..),writeByteArray,indexByteArray)
+import Data.Primitive.Addr (Addr(..))
 import Data.Word (Word8)
 import Foreign.C.Types (CUShort,CInt)
 import GHC.Exts (ByteArray##,State##,RealWorld,runRW##,Ptr(..))
@@ -36,6 +37,7 @@ import Posix.Socket.Types (SocketAddressInternet(..),SocketAddressUnix(..))
 import Foreign.Storable (peekByteOff)
 
 import qualified Data.Primitive as PM
+import qualified Data.Primitive.Addr as PMA
 import qualified Foreign.Storable as FS
 
 -- | The size of a serialized internet socket address.  
@@ -102,7 +104,7 @@ indexSocketAddressInternet addr ix = do
       pure (Right (SocketAddressInternet { port, address }))
     else pure (Left (cushortToCInt fam))
   where
-  !(PM.Addr offAddr) = PM.plusAddr addr (ix * (#{size struct sockaddr_in}))
+  !(Addr offAddr) = PMA.plusAddr addr (ix * (#{size struct sockaddr_in}))
   ptr = Ptr offAddr
 
 -- | Serialize a unix domain socket address so that it may be passed to @bind@.

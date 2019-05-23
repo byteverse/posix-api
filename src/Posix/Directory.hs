@@ -7,7 +7,7 @@ module Posix.Directory
   ( getCurrentWorkingDirectory
   ) where
 
-import Data.Primitive (Addr(..),ByteArray)
+import Data.Primitive (ByteArray)
 import GHC.Exts (Ptr(..))
 import Foreign.Ptr (nullPtr)
 import Foreign.C.Error (Errno,eRANGE,getErrno)
@@ -34,7 +34,7 @@ getCurrentWorkingDirectory = go (4096 - chunkOverhead) where
     -- functions where these repeated 4KB allocations might trigger
     -- GC very quickly.
     marr <- PM.newPinnedByteArray sz
-    let !(Addr addr) = PM.mutableByteArrayContents marr
+    let !(Ptr addr) = PM.mutableByteArrayContents marr
     ptr <- c_getcwd (Ptr addr) (intToCSize sz)
     -- We probably want to use touch# or with# here.
     if ptr /= nullPtr
