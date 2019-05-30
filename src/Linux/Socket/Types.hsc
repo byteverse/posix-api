@@ -61,17 +61,13 @@ module Linux.Socket.Types
 
 import Prelude hiding (truncate)
 
-import Data.Bits (Bits((.|.)),unsafeShiftL,unsafeShiftR)
+import Data.Bits (Bits((.|.)))
 import Data.Word (Word8,Word16,Word32)
 import Data.Primitive.Addr (Addr(..),writeOffAddr)
-import Data.Primitive (MutableByteArray,writeByteArray)
 import Foreign.C.Types (CInt(..),CSize,CUInt)
 import Posix.Socket (MessageFlags(..),Message(Receive),OptionName(..))
 import Foreign.Storable (peekByteOff,pokeByteOff)
 import GHC.Ptr (Ptr(..))
-import GHC.Exts (RealWorld)
-
-import qualified Data.Primitive as PM
 
 newtype SocketFlags = SocketFlags CInt
   deriving stock (Eq)

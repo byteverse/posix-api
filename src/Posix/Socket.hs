@@ -1,5 +1,6 @@
 {-# language BangPatterns #-}
 {-# language DataKinds #-}
+{-# language DuplicateRecordFields #-}
 {-# language GADTSyntax #-}
 {-# language KindSignatures #-}
 {-# language LambdaCase #-}
@@ -81,6 +82,9 @@ module Posix.Socket
     -- $receiveMessage
   , uninterruptibleReceiveMessageA
   , uninterruptibleReceiveMessageB
+    -- ** Send Message
+  , uninterruptibleSendMessageA
+  , uninterruptibleSendMessageB
     -- ** Byte-Order Conversion
     -- $conversion
   , hostToNetworkLong
@@ -316,6 +320,12 @@ foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
   c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 foreign import ccall unsafe "HaskellPosix.h sendto_inet_offset"
   c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
+
+foreign import ccall unsafe "HaskellPosix.h sendmsg_a"
+  c_unsafe_sendmsg_a :: Fd -> Addr# -> CSize -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
+
+foreign import ccall unsafe "HaskellPosix.h sendmsg_b"
+  c_unsafe_sendmsg_b :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 
 foreign import ccall safe "sys/uio.h writev"
   c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
@@ -673,6 +683,37 @@ pinByteArray byteArray =
       pure (Just r)
   where
     len = PM.sizeofByteArray byteArray
+
+-- | Send two payloads (one from unmanaged memory and one from
+-- managed memory) over a network socket.
+uninterruptibleSendMessageA ::
+     Fd -- ^ Socket
+  -> Addr -- ^ Source address (payload A)
+  -> CSize -- ^ Length in bytes (payload A)
+  -> MutableByteArrayOffset RealWorld -- ^ Source and offset (payload B)
+  -> CSize -- ^ Length in bytes (payload B)
+  -> MessageFlags 'Send -- ^ Flags
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+uninterruptibleSendMessageA fd (Addr addr) lenA
+  (MutableByteArrayOffset{array,offset}) lenB flags =
+    c_unsafe_sendmsg_a fd addr lenA (unMba array) offset lenB flags
+      >>= errorsFromSize
+
+-- | Send two payloads (one from managed memory and one from
+-- unmanaged memory) over a network socket.
+uninterruptibleSendMessageB ::
+     Fd -- ^ Socket
+  -> MutableByteArrayOffset RealWorld -- ^ Source and offset (payload B)
+  -> CSize -- ^ Length in bytes (payload B)
+  -> Addr -- ^ Source address (payload A)
+  -> CSize -- ^ Length in bytes (payload A)
+  -> MessageFlags 'Send -- ^ Flags
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+uninterruptibleSendMessageB fd 
+  (MutableByteArrayOffset{array,offset}) lenB
+  (Addr addr) lenA flags =
+    c_unsafe_sendmsg_b fd (unMba array) offset lenB addr lenA flags
+      >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are
@@ -1267,3 +1308,7 @@ isMutableByteArrayPinned :: MutableByteArray s -> Bool
 {-# inline isMutableByteArrayPinned #-}
 isMutableByteArrayPinned (MutableByteArray marr#) =
   Exts.isTrue# (Exts.isMutableByteArrayPinned# marr#)
+
+unMba :: MutableByteArray s -> MutableByteArray# s
+{-# inline unMba #-}
+unMba (MutableByteArray x) = x

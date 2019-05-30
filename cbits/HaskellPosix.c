@@ -63,6 +63,59 @@ ssize_t recvfrom_offset_inet
 int setsockopt_int(int socket, int level, int option_name, int option_value) {
   return setsockopt(socket,level,option_name,&option_value,sizeof(int));
 }
+
+// The second buffer is char* instead of void* because we need
+// to apply an offset to it.
+int sendmsg_a
+  ( int sockfd
+  , void *bufA
+  , size_t lenA
+  , char *bufB
+  , HsInt offB
+  , size_t lenB
+  , int flags
+  ) {
+  struct iovec bufs[2] =
+    { { .iov_base = bufA, .iov_len = lenA }
+    , { .iov_base = (void*)(bufB + offB), .iov_len = lenB }
+    };
+  struct msghdr msg =
+    { .msg_name = NULL
+    , .msg_namelen = 0
+    , .msg_iov = bufs
+    , .msg_iovlen = 2
+    , .msg_control = NULL
+    , .msg_controllen = 0
+    };
+  return sendmsg(sockfd,&msg,flags);
+}
+
+// The first buffer is char* instead of void* because we need
+// to apply an offset to it.
+int sendmsg_b
+  ( int sockfd
+  , char *bufA
+  , HsInt offA
+  , size_t lenA
+  , void *bufB
+  , size_t lenB
+  , int flags
+  ) {
+  struct iovec bufs[2] =
+    { { .iov_base = (void*)(bufA + offA), .iov_len = lenA }
+    , { .iov_base = bufB, .iov_len = lenB }
+    };
+  struct msghdr msg =
+    { .msg_name = NULL
+    , .msg_namelen = 0
+    , .msg_iov = bufs
+    , .msg_iovlen = 2
+    , .msg_control = NULL
+    , .msg_controllen = 0
+    };
+  return sendmsg(sockfd,&msg,flags);
+}
+
 int recvmmsg_sockaddr_in
   ( int sockfd
   , int *lens // used for output
