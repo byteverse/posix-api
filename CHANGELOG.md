@@ -7,6 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.3.1.0] - YYYY-MM-DD
+
+- Make the test suite build again.
+- Add `uninterruptibleSendByteArrays`.
+
 ## [0.1.0.0] - 2018-01-02
 - Initial release.
 - Includes a ton of sockets API stuff.
