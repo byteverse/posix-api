@@ -85,6 +85,7 @@ module Posix.Socket
     -- ** Send Message
   , uninterruptibleSendMessageA
   , uninterruptibleSendMessageB
+  , uninterruptibleSendByteArrays
     -- ** Byte-Order Conversion
     -- $conversion
   , hostToNetworkLong
@@ -326,6 +327,9 @@ foreign import ccall unsafe "HaskellPosix.h sendmsg_a"
 
 foreign import ccall unsafe "HaskellPosix.h sendmsg_b"
   c_unsafe_sendmsg_b :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
+
+foreign import ccall unsafe "HaskellPosix.h sendmsg_bytearrays"
+  c_unsafe_sendmsg_bytearrays :: Fd -> ArrayArray# -> Int -> Int -> Int -> MessageFlags 'Send -> IO CSsize
 
 foreign import ccall safe "sys/uio.h writev"
   c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
@@ -713,6 +717,23 @@ uninterruptibleSendMessageB fd
   (MutableByteArrayOffset{array,offset}) lenB
   (Addr addr) lenA flags =
     c_unsafe_sendmsg_b fd (unMba array) offset lenB addr lenA flags
+      >>= errorsFromSize
+
+-- | Send many immutable byte arrays with @sendmsg@.
+-- This accepts a slice into the chunks. Additionally,
+-- this accepts an offset into the first chunk.
+uninterruptibleSendByteArrays ::
+     Fd -- ^ Socket
+  -> UnliftedArray ByteArray -- ^ Byte arrays
+  -> Int -- ^ Offset into byte array chunks
+  -> Int -- ^ Number of chunks to send
+  -> Int -- ^ Offset into first chunk
+  -> MessageFlags 'Send
+  -> IO (Either Errno CSize)
+{-# inline uninterruptibleSendByteArrays #-}
+uninterruptibleSendByteArrays !fd (UnliftedArray arrs)
+  off !len !offC !flags =
+    c_unsafe_sendmsg_bytearrays fd arrs off len offC flags
       >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. Users

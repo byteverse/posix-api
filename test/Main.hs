@@ -19,6 +19,7 @@ import Test.Tasty.HUnit
 
 import qualified GHC.Exts as E
 import qualified Data.Primitive as PM
+import qualified Data.Primitive.Unlifted.Array as PM
 import qualified Data.Primitive.MVar as PM
 import qualified Posix.Socket as S
 import qualified Linux.Socket as L

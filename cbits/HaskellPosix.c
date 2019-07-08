@@ -14,6 +14,8 @@
 #define unlikely(x)     (x)
 #endif
 
+#define MAX_BYTEARRAYS 2
+
 // Generally, this library tries to avoid wrapping POSIX functions
 // in an additional function. However, for some functions whose wrappers
 // unsafe FFI wrappers use unpinned ByteArray instead of Addr, the only
@@ -64,9 +66,47 @@ int setsockopt_int(int socket, int level, int option_name, int option_value) {
   return setsockopt(socket,level,option_name,&option_value,sizeof(int));
 }
 
+ssize_t sendmsg_bytearrays
+  ( int sockfd
+  , StgMutArrPtrs *arr // used for input
+  , HsInt off // offset into input chunk array
+  , HsInt len0 // number of chunks to send
+  , HsInt offC // offset into first chunk
+  , int flags
+  ) {
+  StgClosure **arrPayload = arr->payload;
+  StgArrBytes **arrs = (StgArrBytes**)arrPayload;
+  struct iovec bufs[MAX_BYTEARRAYS];
+  HsInt len1 = len0 > MAX_BYTEARRAYS ? MAX_BYTEARRAYS : len0;
+  HsInt terminal = off + len1;
+  // We must handle the first chunk specially since
+  // the user can provide an offset into it.
+  if(len1 > 0) {
+    bufs[off].iov_base =
+      (void*)(((char*)(arrs[off]->payload)) + offC);
+    bufs[off].iov_len =
+      (size_t)(((HsInt)(arrs[off]->bytes)) - offC);
+  }
+  for (HsInt i = off + 1; i < terminal; i++) {
+    bufs[i].iov_base = (void*)(arrs[i]->payload);
+    bufs[i].iov_len = (size_t)(arrs[i]->bytes);
+  }
+  // The msg_flags field is not used when sending.
+  // Consequently, we do not write to it or read from it.
+  struct msghdr msg =
+    { .msg_name = NULL
+    , .msg_namelen = 0
+    , .msg_iov = bufs
+    , .msg_iovlen = (size_t)len1
+    , .msg_control = NULL
+    , .msg_controllen = 0
+    };
+  return sendmsg(sockfd,&msg,flags);
+}
+
 // The second buffer is char* instead of void* because we need
 // to apply an offset to it.
-int sendmsg_a
+ssize_t sendmsg_a
   ( int sockfd
   , void *bufA
   , size_t lenA
@@ -92,7 +132,7 @@ int sendmsg_a
 
 // The first buffer is char* instead of void* because we need
 // to apply an offset to it.
-int sendmsg_b
+ssize_t sendmsg_b
   ( int sockfd
   , char *bufA
   , HsInt offA
@@ -126,6 +166,10 @@ int recvmmsg_sockaddr_in
   ) {
   StgClosure **bufsX = arr->payload;
   StgArrBytes **bufs = (StgArrBytes**)bufsX;
+  // TODO: It's probably better to statically pick
+  // out a maximum size for these. On the C stack,
+  // the cost of doing this is basically nothing.
+  // Perhaps 4096 would be a good maximum.
   struct mmsghdr msgs[vlen];
   struct iovec vecs[vlen];
   for(unsigned int i = 0; i < vlen; i++) {
@@ -167,16 +211,20 @@ int recvmmsg_sockaddr_discard
   for(unsigned int i = 0; i < vlen; i++) {
     vecs[i].iov_base = (void*)(bufs[i]->payload);
     vecs[i].iov_len = (size_t)(bufs[i]->bytes);
-    // We deliberately leave msg_len unassigned.
+    // We deliberately leave msg_len and msg_flags
+    // unassigned since they are set by the syscall.
     msgs[i].msg_hdr.msg_name = NULL;
     msgs[i].msg_hdr.msg_namelen = 0;
     msgs[i].msg_hdr.msg_iov = vecs + i;
     msgs[i].msg_hdr.msg_iovlen = 1;
     msgs[i].msg_hdr.msg_control = NULL;
     msgs[i].msg_hdr.msg_controllen = 0;
-    msgs[i].msg_hdr.msg_flags = flags;
   }
   int r = recvmmsg(sockfd,msgs,vlen,flags,NULL);
+  // TODO: Check msg_flags for MSG_TRUNC. I currently
+  // do this in haskell, but it is actually easier to
+  // do here.
+
   // If no errors occurred, copy all of the lengths into the
   // length buffer. This copy makes me feel a little sad.
   // It is the only copy in a wrapper that otherwise is
