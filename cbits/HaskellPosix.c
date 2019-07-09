@@ -14,7 +14,7 @@
 #define unlikely(x)     (x)
 #endif
 
-#define MAX_BYTEARRAYS 2
+#define MAX_BYTEARRAYS 64
 
 // Generally, this library tries to avoid wrapping POSIX functions
 // in an additional function. However, for some functions whose wrappers
@@ -78,18 +78,17 @@ ssize_t sendmsg_bytearrays
   StgArrBytes **arrs = (StgArrBytes**)arrPayload;
   struct iovec bufs[MAX_BYTEARRAYS];
   HsInt len1 = len0 > MAX_BYTEARRAYS ? MAX_BYTEARRAYS : len0;
-  HsInt terminal = off + len1;
   // We must handle the first chunk specially since
   // the user can provide an offset into it.
   if(len1 > 0) {
-    bufs[off].iov_base =
+    bufs[0].iov_base =
       (void*)(((char*)(arrs[off]->payload)) + offC);
-    bufs[off].iov_len =
+    bufs[0].iov_len =
       (size_t)(((HsInt)(arrs[off]->bytes)) - offC);
   }
-  for (HsInt i = off + 1; i < terminal; i++) {
-    bufs[i].iov_base = (void*)(arrs[i]->payload);
-    bufs[i].iov_len = (size_t)(arrs[i]->bytes);
+  for (HsInt i = 1; i < len1; i++) {
+    bufs[i].iov_base = (void*)(arrs[off + i]->payload);
+    bufs[i].iov_len = (size_t)(arrs[off + i]->bytes);
   }
   // The msg_flags field is not used when sending.
   // Consequently, we do not write to it or read from it.
