@@ -65,6 +65,7 @@ module Posix.Socket
     -- ** Send To
   , uninterruptibleSendToByteArray
   , uninterruptibleSendToMutableByteArray
+  , uninterruptibleSendToInternet
   , uninterruptibleSendToInternetByteArray
   , uninterruptibleSendToInternetMutableByteArray
     -- ** Write Vector
@@ -77,6 +78,8 @@ module Posix.Socket
     -- ** Receive From
   , uninterruptibleReceiveFromMutableByteArray
   , uninterruptibleReceiveFromMutableByteArray_
+  , uninterruptibleReceiveFrom_
+  , uninterruptibleReceiveFromInternet
   , uninterruptibleReceiveFromInternetMutableByteArray
     -- ** Receive Message
     -- $receiveMessage
@@ -321,6 +324,8 @@ foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
   c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 foreign import ccall unsafe "HaskellPosix.h sendto_inet_offset"
   c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
+foreign import ccall unsafe "HaskellPosix.h sendto_inet_addr"
+  c_unsafe_addr_sendto_inet :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 
 foreign import ccall unsafe "HaskellPosix.h sendmsg_a"
   c_unsafe_sendmsg_a :: Fd -> Addr# -> CSize -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
@@ -345,15 +350,28 @@ foreign import ccall unsafe "sys/socket.h recv_offset"
 -- The last two arguments are SocketAddress and Ptr CInt.
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
   c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
-foreign import ccall unsafe "sys/socket.h recvfrom_offset"
-  c_unsafe_mutable_byte_array_ptr_recvfrom ::
-       Fd -> MutableByteArray# RealWorld -> CInt -> CSize
-    -> MessageFlags 'Receive -> Ptr Void -> Ptr CInt -> IO CSsize
+foreign import ccall unsafe "sys/socket.h recvfrom_offset_peerless"
+  c_unsafe_mutable_byte_array_peerless_recvfrom ::
+       Fd
+    -> MutableByteArray# RealWorld -> CInt -> CSize
+    -> MessageFlags 'Receive -> IO CSsize
+foreign import ccall unsafe "sys/socket.h recvfrom_addr_peerless"
+  c_unsafe_addr_peerless_recvfrom ::
+       Fd -> Addr# -> CSize -> MessageFlags 'Receive -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_offset_inet"
   c_unsafe_recvfrom_inet ::
        Fd
     -> MutableByteArray# RealWorld
     -> Int
+    -> CSize
+    -> MessageFlags 'Receive
+    -> MutableByteArray# RealWorld
+    -> Int
+    -> IO CSsize
+foreign import ccall unsafe "sys/socket.h recvfrom_offset_inet_addr"
+  c_unsafe_recvfrom_inet_addr ::
+       Fd
+    -> Addr#
     -> CSize
     -> MessageFlags 'Receive
     -> MutableByteArray# RealWorld
@@ -840,6 +858,20 @@ uninterruptibleSendToInternetByteArray ::
 uninterruptibleSendToInternetByteArray fd (ByteArray b) off len flags (SocketAddressInternet{port,address}) =
   c_unsafe_bytearray_sendto_inet fd b off len flags port address >>= errorsFromSize
 
+-- | Variant of 'uninterruptibleSendToByteArray' that requires
+--   that @sockaddr_in@ be used as the socket address. This is used to
+--   avoid allocating a buffer for the socket address when the caller
+--   knows in advance that they are sending to an IPv4 address.
+uninterruptibleSendToInternet ::
+     Fd -- ^ Socket
+  -> Addr -- ^ Source byte array
+  -> CSize -- ^ Length in bytes
+  -> MessageFlags 'Send -- ^ Flags
+  -> SocketAddressInternet -- ^ Socket Address
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+uninterruptibleSendToInternet fd (Addr b) len flags (SocketAddressInternet{port,address}) =
+  c_unsafe_addr_sendto_inet fd b len flags port address >>= errorsFromSize
+
 -- | Send data from a mutable byte array over an unconnected network socket.
 --   This uses the unsafe FFI; concerns pertaining to 'uninterruptibleSend'
 --   apply to this function as well. The offset and length arguments
@@ -972,6 +1004,20 @@ uninterruptibleReceiveFromMutableByteArray !fd (MutableByteArray !b) !off !len !
       pure (Right (sz,SocketAddress sockAddr,cssizeToCSize r))
     else fmap Left getErrno
 
+uninterruptibleReceiveFromInternet ::
+     Fd -- ^ Socket
+  -> Addr -- ^ Destination byte array
+  -> CSize -- ^ Maximum bytes to receive
+  -> MessageFlags 'Receive -- ^ Flags
+  -> MutablePrimArrayOffset RealWorld SocketAddressInternet -- ^ Address
+  -> IO (Either Errno CSize) -- ^ Number of bytes received into array
+{-# inline uninterruptibleReceiveFromInternet #-}
+uninterruptibleReceiveFromInternet !fd
+  (Addr b) !len !flags
+  (MutablePrimArrayOffset (MutablePrimArray sockAddrBuf) addrOff) =
+    c_unsafe_recvfrom_inet_addr fd b len flags sockAddrBuf addrOff
+    >>= errorsFromSize
+
 uninterruptibleReceiveFromInternetMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArrayOffset RealWorld -- ^ Destination byte array
@@ -998,7 +1044,22 @@ uninterruptibleReceiveFromMutableByteArray_ ::
   -> IO (Either Errno CSize) -- ^ Number of bytes received into array
 {-# inline uninterruptibleReceiveFromMutableByteArray_ #-}
 uninterruptibleReceiveFromMutableByteArray_ !fd (MutableByteArray !b) !off !len !flags =
-  c_unsafe_mutable_byte_array_ptr_recvfrom fd b off len flags nullPtr nullPtr >>= errorsFromSize
+  c_unsafe_mutable_byte_array_peerless_recvfrom fd b off len flags
+    >>= errorsFromSize
+
+-- | Receive data into an address from a network socket. This uses the unsafe
+--   FFI. This does not return the socket address of the remote host that
+--   sent the packet received.
+uninterruptibleReceiveFrom_ ::
+     Fd -- ^ Socket
+  -> Addr -- ^ Destination byte array
+  -> CSize -- ^ Maximum bytes to receive
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno CSize) -- ^ Number of bytes received into array
+{-# inline uninterruptibleReceiveFrom_ #-}
+uninterruptibleReceiveFrom_ !fd (Addr !b) !len !flags =
+  c_unsafe_addr_peerless_recvfrom fd b len flags
+    >>= errorsFromSize
 
 -- | Receive a message, scattering the input. This does not provide
 --   the socket address or the control messages. All of the chunks

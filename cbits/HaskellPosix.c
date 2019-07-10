@@ -39,8 +39,22 @@ ssize_t sendto_inet_offset(int socket, const char *message, int offset, size_t l
   dest.sin_port = port;
   return sendto(socket, (const void*)(message + offset), length, flags, (struct sockaddr*)&dest, sizeof(dest));
 }
+ssize_t sendto_inet_addr(int socket, const void *message, size_t length, int flags, uint16_t port, uint32_t inet_addr){
+  struct sockaddr_in dest;
+  memset(&dest, 0, sizeof(dest));
+  dest.sin_family = AF_INET;
+  dest.sin_addr.s_addr = inet_addr;
+  dest.sin_port = port;
+  return sendto(socket, message, length, flags, (struct sockaddr*)&dest, sizeof(dest));
+}
 ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict address_len) {
   return recvfrom(socket, (void*)(buffer + offset), length, flags, address, address_len);
+}
+ssize_t recvfrom_offset_peerless(int socket, char *restrict buffer, int offset, size_t length, int flags) {
+  return recvfrom(socket, (void*)(buffer + offset), length, flags, NULL, NULL);
+}
+ssize_t recvfrom_addr_peerless(int socket, void *restrict buffer, size_t length, int flags) {
+  return recvfrom(socket, buffer, length, flags, NULL, NULL);
 }
 ssize_t recvfrom_offset_inet
   ( int socket
@@ -52,6 +66,24 @@ ssize_t recvfrom_offset_inet
   , HsInt address_offset
   ) {
   void* buffer = (void*)(buffer_base + offset);
+  struct sockaddr_in* address = addresses + address_offset;
+  socklen_t address_len[1] = {sizeof(struct sockaddr_in)};
+  ssize_t r = recvfrom(socket, buffer, length, flags, address, address_len);
+  if (likely(address_len[0] == sizeof(struct sockaddr_in))) {
+    return r;
+  } else {
+    fprintf(stderr, "posix-api: recvfrom_offset_bufs");
+    exit(EXIT_FAILURE);
+  }
+}
+ssize_t recvfrom_offset_inet_addr
+  ( int socket
+  , void *restrict buffer
+  , size_t length
+  , int flags
+  , struct sockaddr_in *restrict addresses
+  , HsInt address_offset
+  ) {
   struct sockaddr_in* address = addresses + address_offset;
   socklen_t address_len[1] = {sizeof(struct sockaddr_in)};
   ssize_t r = recvfrom(socket, buffer, length, flags, address, address_len);
