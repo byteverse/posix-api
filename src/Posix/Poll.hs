@@ -23,7 +23,6 @@ import GHC.Ptr (Ptr)
 import GHC.Exts (RealWorld,MutableByteArray#)
 import Posix.Poll.Types (PollFd(..),Exchange(..))
 import Data.Primitive (MutablePrimArray(..))
-import Data.Word (Word64)
 
 import qualified Posix.Poll.Types as PT
 
