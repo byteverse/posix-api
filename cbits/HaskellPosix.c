@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <mqueue.h>
 #include <sys/socket.h>
 #include <string.h>
 #include <netinet/in.h>
@@ -268,3 +269,6 @@ int recvmmsg_sockaddr_discard
   return r;
 }
 
+ssize_t mq_send_offset(mqd_t mqdes, const char *msg, HsInt offset, size_t len, unsigned int prio){
+  return mq_send(mqdes, msg + offset, len, prio);
+}

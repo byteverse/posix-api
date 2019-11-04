@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: posix-api
-version: 0.3.2.0
+version: 0.3.3.0
 synopsis: posix bindings
 description:
   This library provides a very thin wrapper around POSIX APIs. It can be
@@ -79,21 +79,26 @@ flag assertions
 library
   exposed-modules:
     Linux.Epoll
+    Linux.MessageQueue
     Linux.Socket
     Posix.Directory
+    Posix.MessageQueue
     Posix.Poll
     Posix.Select
     Posix.Socket
     Posix.Types
   other-modules:
     Linux.Epoll.Types
+    Linux.MessageQueue.Types
     Linux.Socket.Types
+    Posix.MessageQueue.Types
     Posix.Poll.Types
     Posix.Socket.Platform
     Posix.Socket.Types
     Assertion
   build-depends:
     , base >=4.11.1 && <5
+    , byteslice >= 0.1.3 && <0.2
     , primitive >= 0.7 && <0.8
     , primitive-addr >= 0.1 && <0.2
     , primitive-offset >= 0.2 && <0.3
