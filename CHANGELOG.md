@@ -7,9 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## [0.3.3.0] - 2019-??-??
+## [0.3.3.0] - 2019-12-18
 
 - Support several POSIX message queue functions.
+- Support Linux systemd functions.
 
 ## [0.3.2.0] - 2019-07-21
 
