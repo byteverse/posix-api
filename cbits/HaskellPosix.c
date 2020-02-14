@@ -1,9 +1,12 @@
 #define _GNU_SOURCE
 #include <mqueue.h>
-#include <sys/socket.h>
-#include <string.h>
 #include <netinet/in.h>
 #include <stdint.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "HaskellPosix.h"
 #include "Rts.h"
 
@@ -271,4 +274,8 @@ int recvmmsg_sockaddr_discard
 
 ssize_t mq_send_offset(mqd_t mqdes, const char *msg, HsInt offset, size_t len, unsigned int prio){
   return mq_send(mqdes, msg + offset, len, prio);
+}
+
+int hs_get_fd_flags(int fd) {
+  return fcntl(fd,F_GETFD);
 }
