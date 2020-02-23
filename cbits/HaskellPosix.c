@@ -26,6 +26,9 @@
 // way to support providing an offset (without just copying the bytes
 // into pinned memory) is to use a wrapper.
 
+ssize_t write_offset(int fd, const char *message, HsInt offset, size_t length){
+  return write(fd, (const void*)(message + offset), length);
+}
 ssize_t recv_offset(int socket, char *buffer, int offset, size_t length, int flags) {
   return recv(socket, (void*)(buffer + offset), length, flags);
 }
@@ -278,4 +281,8 @@ ssize_t mq_send_offset(mqd_t mqdes, const char *msg, HsInt offset, size_t len, u
 
 int hs_get_fd_flags(int fd) {
   return fcntl(fd,F_GETFD);
+}
+
+int hs_get_fl_flags(int fd) {
+  return fcntl(fd,F_GETFL);
 }

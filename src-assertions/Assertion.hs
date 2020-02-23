@@ -2,7 +2,8 @@
 {-# language UnboxedTuples #-}
 
 module Assertion
-  ( assertMutablePrimArrayPinned
+  ( assertByteArrayPinned
+  , assertMutablePrimArrayPinned
   ) where
 
 import GHC.Exts (isTrue#)
@@ -17,3 +18,8 @@ assertMutablePrimArrayPinned x = if isMutablePrimArrayPinned x
 
 isMutablePrimArrayPinned :: PM.MutablePrimArray s a -> Bool
 isMutablePrimArrayPinned (PM.MutablePrimArray marr#) = isTrue# (Exts.isMutableByteArrayPinned# marr#)
+
+assertByteArrayPinned :: PM.ByteArray -> PM.ByteArray
+assertByteArrayPinned x = if PM.isByteArrayPinned x
+  then x
+  else error "assertByteArrayPinned"
