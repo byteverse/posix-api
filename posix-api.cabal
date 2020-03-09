@@ -119,7 +119,7 @@ library
   include-dirs: include
   includes: HaskellPosix.h
   extra-libraries: systemd
-  build-tool-depends: hsc2hs:hsc2hs
+  build-tool-depends: hsc2hs:hsc2hs >= 0.68.5
 
 test-suite test
   type: exitcode-stdio-1.0
