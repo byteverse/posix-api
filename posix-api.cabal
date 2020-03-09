@@ -83,6 +83,7 @@ library
     Linux.Socket
     Linux.Systemd
     Posix.Directory
+    Posix.File
     Posix.MessageQueue
     Posix.Poll
     Posix.Select
@@ -92,6 +93,7 @@ library
     Linux.Epoll.Types
     Linux.MessageQueue.Types
     Linux.Socket.Types
+    Posix.File.Types
     Posix.MessageQueue.Types
     Posix.Poll.Types
     Posix.Socket.Platform
