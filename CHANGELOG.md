@@ -7,6 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.3.4.0] - 2020-03-09
+
+- Add `Posix.File`
+- Add lower bound for `hsc2hs` build tool
+
 ## [0.3.3.0] - 2019-12-18
 
 - Support several POSIX message queue functions.
