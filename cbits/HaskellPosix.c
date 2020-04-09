@@ -105,16 +105,24 @@ int setsockopt_int(int socket, int level, int option_name, int option_value) {
   return setsockopt(socket,level,option_name,&option_value,sizeof(int));
 }
 
+// There are some compatibility macros in here. Before GHC 8.10,
+// no offset is applied to ArrayArray#.
 ssize_t sendmsg_bytearrays
   ( int sockfd
+#if __GLASGOW_HASKELL__ >= 810
+  , StgArrBytes **arrs // used for input
+#else
   , StgMutArrPtrs *arr // used for input
+#endif
   , HsInt off // offset into input chunk array
   , HsInt len0 // number of chunks to send
   , HsInt offC // offset into first chunk
   , int flags
   ) {
+#if __GLASGOW_HASKELL__ < 810
   StgClosure **arrPayload = arr->payload;
   StgArrBytes **arrs = (StgArrBytes**)arrPayload;
+#endif
   struct iovec bufs[MAX_BYTEARRAYS];
   HsInt len1 = len0 > MAX_BYTEARRAYS ? MAX_BYTEARRAYS : len0;
   // We must handle the first chunk specially since
@@ -194,16 +202,24 @@ ssize_t sendmsg_b
   return sendmsg(sockfd,&msg,flags);
 }
 
+// There are some compatibility macros in here. Before GHC 8.10,
+// no offset is applied to ArrayArray#.
 int recvmmsg_sockaddr_in
   ( int sockfd
   , int *lens // used for output
   , struct sockaddr_in *addrs // used for output
+#if __GLASGOW_HASKELL__ >= 810
+  , StgArrBytes **bufs // used for output
+#else
   , StgMutArrPtrs *arr // used for output
+#endif
   , unsigned int vlen
   , int flags
   ) {
+#if __GLASGOW_HASKELL__ < 810
   StgClosure **bufsX = arr->payload;
   StgArrBytes **bufs = (StgArrBytes**)bufsX;
+#endif
   // TODO: It's probably better to statically pick
   // out a maximum size for these. On the C stack,
   // the cost of doing this is basically nothing.
@@ -238,12 +254,18 @@ int recvmmsg_sockaddr_in
 int recvmmsg_sockaddr_discard
   ( int sockfd
   , int *lens // used for output
+#if __GLASGOW_HASKELL__ >= 810
+  , StgArrBytes **bufs // used for output
+#else
   , StgMutArrPtrs *arr // used for output
+#endif
   , unsigned int vlen
   , int flags
   ) {
+#if __GLASGOW_HASKELL__ < 810
   StgClosure **bufsX = arr->payload;
   StgArrBytes **bufs = (StgArrBytes**)bufsX;
+#endif
   struct mmsghdr msgs[vlen];
   struct iovec vecs[vlen];
   for(unsigned int i = 0; i < vlen; i++) {

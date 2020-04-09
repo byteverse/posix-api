@@ -7,6 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.3.4.1] - 2020-??-??
+
+- Make compatible with GHC 8.10 by changing the way ArrayArray# is handled
+  on the C side of the FFI.
+
 ## [0.3.4.0] - 2020-03-09
 
 - Add `Posix.File`
