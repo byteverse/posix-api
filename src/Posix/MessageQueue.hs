@@ -7,18 +7,18 @@ module Posix.MessageQueue
   , uninterruptibleReceiveByteArray
   , uninterruptibleSendBytes
     -- * Types
-  , OpenMode(..)
-  , OpenFlags(..)
-    -- * Bit Twiddle
-  , T.applyOpenFlags
+  , AccessMode(..)
+  , CreationFlags(..)
+  , StatusFlags(..)
     -- * Open Access Mode
-  , T.readOnly
-  , T.writeOnly
-  , T.readWrite
+  , F.readOnly
+  , F.writeOnly
+  , F.readWrite
     -- * Open Flags
-  , T.nonblocking
+  , F.nonblocking
   ) where
 
+import Data.Bits ((.|.))
 import GHC.Exts (RealWorld,ByteArray#,MutableByteArray#,Addr#)
 import GHC.Exts (Int(I#))
 import System.Posix.Types (Fd(..),CSsize(..))
@@ -27,11 +27,11 @@ import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.String (CString)
 import Data.Primitive (MutableByteArray(..),ByteArray(..))
 import Data.Bytes.Types (Bytes(Bytes))
-import Posix.MessageQueue.Types (OpenMode(..),OpenFlags(..))
+import Posix.File.Types (CreationFlags(..),AccessMode(..),StatusFlags(..))
 import qualified GHC.Exts as Exts
 import qualified Data.Primitive as PM
 import qualified Control.Monad.Primitive as PM
-import qualified Posix.MessageQueue.Types as T
+import qualified Posix.File.Types as F
 
 foreign import ccall unsafe "mqueue.h mq_receive"
   c_unsafe_mq_receive :: Fd -> MutableByteArray# RealWorld
@@ -42,14 +42,16 @@ foreign import ccall unsafe "mqueue.h mq_send_offset"
     -> ByteArray# -> Int -> CSize -> CUInt -> IO CInt
 
 foreign import ccall safe "mqueue.h mq_open"
-  c_safe_mq_open :: CString -> OpenMode -> IO Fd
+  c_safe_mq_open :: CString -> CInt -> IO Fd
 
 open ::
      CString -- ^ NULL-terminated name of queue, must start with slash
-  -> OpenMode -- ^ Access mode and flags
+  -> AccessMode -- ^ Access mode
+  -> CreationFlags -- ^ Creation flags
+  -> StatusFlags -- ^ Status flags
   -> IO (Either Errno Fd)
-open !name !mode =
-  c_safe_mq_open name mode >>= errorsFromFd
+open !name (AccessMode x) (CreationFlags y) (StatusFlags z) =
+  c_safe_mq_open name (x .|. y .|. z) >>= errorsFromFd
 
 uninterruptibleReceiveByteArray ::
      Fd -- ^ Message queue

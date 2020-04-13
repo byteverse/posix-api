@@ -78,6 +78,7 @@ flag assertions
 
 library
   exposed-modules:
+    Foreign.C.String.Managed
     Linux.Epoll
     Linux.MessageQueue
     Linux.Socket

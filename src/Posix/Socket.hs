@@ -50,9 +50,9 @@ module Posix.Socket
     -- ** Set Socket Option
   , uninterruptibleSetSocketOptionInt
     -- ** Close
-  , close
-  , uninterruptibleClose
-  , uninterruptibleErrorlessClose
+  , F.close
+  , F.uninterruptibleClose
+  , F.uninterruptibleErrorlessClose
     -- ** Shutdown
   , uninterruptibleShutdown
     -- ** Send
@@ -201,6 +201,7 @@ import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
 import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
 import System.Posix.Types (Fd(..),CSsize(..))
 
+import qualified Posix.File as F
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Unlifted.Array as PM
@@ -219,12 +220,6 @@ foreign import ccall unsafe "sys/socket.h socketpair"
 
 foreign import ccall unsafe "sys/socket.h listen"
   c_listen :: Fd -> CInt -> IO CInt
-
-foreign import ccall safe "unistd.h close"
-  c_safe_close :: Fd -> IO CInt
-
-foreign import ccall unsafe "unistd.h close"
-  c_unsafe_close :: Fd -> IO CInt
 
 foreign import ccall unsafe "unistd.h shutdown"
   c_unsafe_shutdown :: Fd -> ShutdownType -> IO CInt
@@ -1140,38 +1135,6 @@ uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz =
       touchMutableByteArray msgHdrBuf
       touchMutableByteArray sockAddrBuf
       fmap Left getErrno
-
--- | Close a socket. The <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>
---   includes more details. This uses the safe FFI.
-close ::
-     Fd -- ^ Socket
-  -> IO (Either Errno ())
-close fd = c_safe_close fd >>= errorsFromInt_
-
--- | Close a socket. This uses the unsafe FFI. According to the
---   <http://pubs.opengroup.org/onlinepubs/009696899/functions/close.html POSIX specification>,
---   "If @fildes@ refers to a socket, @close()@ shall cause the socket to
---   be destroyed. If the socket is in connection-mode, and the @SO_LINGER@
---   option is set for the socket with non-zero linger time, and the socket
---   has untransmitted data, then @close()@ shall block for up to the current
---   linger interval until all data is transmitted."
-uninterruptibleClose ::
-     Fd -- ^ Socket
-  -> IO (Either Errno ())
-uninterruptibleClose fd = c_unsafe_close fd >>= errorsFromInt_
-
--- | Close a socket with the unsafe FFI. Do not check for errors. It is only
---   appropriate to use this when a socket is being closed to handle an
---   exceptional case. Since the user will want the propogate the original
---   exception, the exception provided by 'uninterruptibleClose' would just
---   be discarded. This function allows us to potentially avoid an additional
---   FFI call to 'getErrno'.
-uninterruptibleErrorlessClose ::
-     Fd -- ^ Socket
-  -> IO ()
-uninterruptibleErrorlessClose fd = do
-  _ <- c_unsafe_close fd
-  pure ()
 
 -- | Shutdown a socket. This uses the unsafe FFI.
 uninterruptibleShutdown ::
