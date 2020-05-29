@@ -7,8 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## [0.3.4.1] - 2020-??-??
+## [0.3.5.0] - 2020-??-??
 
+- Breaking: Start using pattern synonyms for macros.
+- Add dedicated modules for peeking at structures.
 - Make compatible with GHC 8.10 by changing the way ArrayArray# is handled
   on the C side of the FFI.
 

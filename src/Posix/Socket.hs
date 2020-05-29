@@ -6,6 +6,7 @@
 {-# language LambdaCase #-}
 {-# language MagicHash #-}
 {-# language NamedFieldPuns #-}
+{-# language PatternSynonyms #-}
 {-# language ScopedTypeVariables #-}
 {-# language UnboxedTuples #-}
 {-# language UnliftedFFITypes #-}
@@ -32,6 +33,9 @@ module Posix.Socket
     uninterruptibleSocket
     -- ** Socket Pair
   , uninterruptibleSocketPair
+    -- ** Address Resolution
+  , getAddressInfo
+  , uninterruptibleFreeAddressInfo
     -- ** Bind
   , uninterruptibleBind
     -- ** Connect
@@ -96,7 +100,7 @@ module Posix.Socket
   , networkToHostLong
   , networkToHostShort
     -- * Types
-  , Domain(..)
+  , Family(..)
   , Type(..)
   , Protocol(..)
   , OptionName(..)
@@ -105,6 +109,7 @@ module Posix.Socket
   , Message(..)
   , MessageFlags(..)
   , ShutdownType(..)
+  , AddressInfo
     -- * Socket Address
     -- ** Types
   , SocketAddress(..)
@@ -120,10 +125,10 @@ module Posix.Socket
   , PSP.sizeofSocketAddressInternet
     -- * Data Construction
     -- ** Socket Domains
-  , PST.unix
-  , PST.unspecified
-  , PST.internet
-  , PST.internet6
+  , pattern PST.Unix
+  , pattern PST.Unspecified
+  , pattern PST.Internet
+  , pattern PST.Internet6
     -- ** Socket Types
   , PST.stream
   , PST.datagram
@@ -152,12 +157,25 @@ module Posix.Socket
     -- ** Option Names
   , PST.optionError
   , PST.broadcast
+    -- ** Address Info
+    -- *** Peek
+  , PST.peekAddressInfoFlags
+    -- *** Poke
+  , PST.pokeAddressInfoFlags
+    -- *** Metadata
+  , PST.sizeofAddressInfo
     -- ** Message Header
     -- *** Peek
   , PST.peekMessageHeaderName
   , PST.peekMessageHeaderNameLength
   , PST.peekMessageHeaderIOVector
   , PST.peekMessageHeaderIOVectorLength
+  , PST.peekMessageHeaderControl
+  , PST.peekMessageHeaderControlLength
+  , PST.peekMessageHeaderFlags
+  , PST.peekControlMessageHeaderLevel
+  , PST.peekControlMessageHeaderLength
+  , PST.peekControlMessageHeaderType
     -- *** Poke
   , PST.pokeMessageHeaderName
   , PST.pokeMessageHeaderNameLength
@@ -188,17 +206,19 @@ import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
 import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
 import Data.Word (Word8,Word16,Word32,byteSwap16,byteSwap32)
 import Data.Void (Void)
-import Foreign.C.Error (Errno,getErrno)
+import Foreign.C.Error (Errno(Errno),getErrno)
+import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
 import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#)
 import GHC.Exts (Addr#,TYPE,RuntimeRep(UnliftedRep))
 import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
-import Posix.Socket.Types (Domain(..),Protocol(..),Type(..),SocketAddress(..))
+import Posix.Socket.Types (Family(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (SocketAddressInternet(..))
 import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
 import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
+import Posix.Socket.Types (AddressInfo)
 import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Posix.File as F
@@ -212,11 +232,24 @@ import qualified GHC.Exts as Exts
 -- to serialize some of various kind of socket address types.
 import qualified Posix.Socket.Platform as PSP
 
+-- getaddrinfo cannot use the unsafe ffi
+foreign import ccall safe "sys/socket.h getaddrinfo"
+  c_safe_getaddrinfo ::
+       CString
+    -> CString
+    -> Ptr AddressInfo
+    -> MutableByteArray# RealWorld -- actually a `Ptr (Ptr AddressInfo))`.
+    -> IO Errno
+
+-- | Free the @addrinfo@ at the pointer.
+foreign import ccall safe "sys/socket.h freeaddrinfo"
+  uninterruptibleFreeAddressInfo :: Ptr AddressInfo -> IO ()
+
 foreign import ccall unsafe "sys/socket.h socket"
-  c_socket :: Domain -> Type -> Protocol -> IO Fd
+  c_socket :: Family -> Type -> Protocol -> IO Fd
 
 foreign import ccall unsafe "sys/socket.h socketpair"
-  c_socketpair :: Domain -> Type -> Protocol -> MutableByteArray# RealWorld -> IO CInt
+  c_socketpair :: Family -> Type -> Protocol -> MutableByteArray# RealWorld -> IO CInt
 
 foreign import ccall unsafe "sys/socket.h listen"
   c_listen :: Fd -> CInt -> IO CInt
@@ -386,7 +419,7 @@ foreign import ccall unsafe "sys/socket.h recvmsg"
 --   this function. The author believes that it cannot block for a prolonged
 --   period of time.
 uninterruptibleSocket ::
-     Domain -- ^ Communications domain (e.g. 'internet', 'unix')
+     Family -- ^ Communications domain (e.g. 'internet', 'unix')
   -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
   -> Protocol -- ^ Protocol
   -> IO (Either Errno Fd)
@@ -399,7 +432,7 @@ uninterruptibleSocket dom typ prot = c_socket dom typ prot >>= errorsFromFd
 --   this function. The author believes that it cannot block for a prolonged
 --   period of time.
 uninterruptibleSocketPair ::
-     Domain -- ^ Communications domain (probably 'unix')
+     Family -- ^ Communications domain (probably 'unix')
   -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
   -> Protocol -- ^ Protocol
   -> IO (Either Errno (Fd,Fd))
@@ -414,6 +447,24 @@ uninterruptibleSocketPair dom typ prot = do
       fd2 <- PM.readPrimArray sockets 1
       pure (Right (fd1,fd2))
     else fmap Left getErrno
+
+
+-- | Given node and service, which identify an Internet host and a service,
+-- @getaddrinfo()@ returns one or more @addrinfo@ structures. The type of this
+-- wrapper differs slightly from the type of its C counterpart. Remember to call
+-- 'uninterruptibleFreeAddressInfo' when finished with the result.
+getAddressInfo ::
+     CString -- * Node, identifies an Internet host
+  -> CString -- * Service
+  -> Ptr AddressInfo -- * Hints
+  -> IO (Either Errno (Ptr AddressInfo))
+getAddressInfo !node !service !hints = do
+  resBuf@(MutableByteArray resBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: Ptr ()))
+  c_safe_getaddrinfo node service hints resBuf# >>= \case
+    Errno 0 -> do
+      res <- PM.readByteArray resBuf 0
+      pure (Right res)
+    e -> pure (Left e)
 
 -- | Assign a local socket address address to a socket identified by
 --   descriptor socket that has no local socket address assigned. The

@@ -5,6 +5,7 @@
 {-# language GeneralizedNewtypeDeriving #-}
 {-# language KindSignatures #-}
 {-# language MagicHash #-}
+{-# language PatternSynonyms #-}
 {-# language UnboxedTuples #-}
 {-# language NamedFieldPuns #-}
 
@@ -13,13 +14,14 @@
 {-# OPTIONS_GHC -fno-warn-unticked-promoted-constructors #-}
 
 #include <sys/socket.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include "custom.h"
 
 -- | All of the data constructors provided by this module are unsafe.
 --   Only use them if you really know what you are doing.
 module Posix.Socket.Types
-  ( Domain(..)
+  ( Family(..)
   , Type(..)
   , Protocol(..)
   , Level(..)
@@ -32,11 +34,14 @@ module Posix.Socket.Types
   , MessageFlags(..)
   , Message(..)
   , ShutdownType(..)
+  , AddressInfoFlags(..)
+    -- * Phantom Types
+  , AddressInfo
     -- * Socket Families
-  , unix
-  , unspecified
-  , internet
-  , internet6
+  , pattern Unix
+  , pattern Unspecified
+  , pattern Internet
+  , pattern Internet6
     -- * Socket Types
   , stream
   , datagram
@@ -65,6 +70,22 @@ module Posix.Socket.Types
     -- * Option Names
   , optionError
   , broadcast
+    -- * AddressInfo
+    -- ** Peek
+  , peekAddressInfoFlags
+  , peekAddressInfoFamily
+  , peekAddressInfoSocketType
+  , peekAddressInfoProtocol
+  , peekAddressInfoAddressLength
+  , peekAddressInfoAddress
+  , peekAddressInfoNext
+    -- ** Poke
+  , pokeAddressInfoFlags
+  , pokeAddressInfoFamily
+  , pokeAddressInfoSocketType
+  , pokeAddressInfoProtocol
+    -- ** Metadata
+  , sizeofAddressInfo
     -- * Message Header
     -- ** Peek
   , peekMessageHeaderName
@@ -105,23 +126,43 @@ import Data.Primitive (ByteArray,Prim(..))
 import Data.Primitive.Addr (Addr(..))
 import Data.Word (Word16,Word32,Word64)
 import Foreign.C.Types (CInt(..),CSize)
-import Foreign.Storable (peekByteOff,pokeByteOff)
+import Foreign.Storable (Storable,peekByteOff,pokeByteOff)
 import GHC.Ptr (Ptr(..))
 import GHC.Exts (Int(I##),Int##,(*##),(+##))
 
 import qualified Data.Kind
 import qualified Data.Primitive as PM
 
+-- | Phantom for pointers to @addrinfo@ in address resolution functions.
+-- According to POSIX:
+--
+-- > struct addrinfo {
+-- >     int              ai_flags;
+-- >     int              ai_family;
+-- >     int              ai_socktype;
+-- >     int              ai_protocol;
+-- >     socklen_t        ai_addrlen;
+-- >     struct sockaddr *ai_addr;
+-- >     char            *ai_canonname;
+-- >     struct addrinfo *ai_next;
+-- > };
+data AddressInfo
+
 -- | A socket communications domain, sometimes referred to as a family. The spec
 --   mandates @AF_UNIX@, @AF_UNSPEC@, and @AF_INET@.
-newtype Domain = Domain CInt
+newtype Family = Family CInt
+  deriving newtype (Storable)
 
 -- | A socket type. The spec mandates @SOCK_STREAM@, @SOCK_DGRAM@,
 --   and @SOCK_SEQPACKET@. Other types may be available on a per-platform
 --   basis.
+--
+--   TODO: Change this to SocketType
 newtype Type = Type CInt
+  deriving newtype (Storable)
 
 newtype Protocol = Protocol { getProtocol :: CInt }
+  deriving newtype (Storable)
 
 newtype Level = Level CInt
 
@@ -147,6 +188,13 @@ newtype MessageFlags :: Message -> Data.Kind.Type where
 
 instance Semigroup (MessageFlags m) where (<>) = (.|.)
 instance Monoid (MessageFlags m) where mempty = MessageFlags 0
+
+newtype AddressInfoFlags = AddressInfoFlags CInt
+  deriving newtype (Eq,Storable)
+
+instance Semigroup AddressInfoFlags where
+  AddressInfoFlags x <> AddressInfoFlags y = AddressInfoFlags (x .|. y)
+instance Monoid AddressInfoFlags where mempty = AddressInfoFlags 0
 
 -- | The @sockaddr@ data. This is an extensible tagged union, so this library
 --   has chosen to represent it as byte array. It is up to platform-specific
@@ -258,24 +306,24 @@ sequencedPacket :: Type
 sequencedPacket = Type #{const SOCK_SEQPACKET}
 
 -- | The @AF_UNIX@ communications domain.
-unix :: Domain
-unix = Domain #{const AF_UNIX}
+pattern Unix :: Family
+pattern Unix = Family #{const AF_UNIX}
 
 -- | The @AF_UNSPEC@ communications domain.
-unspecified :: Domain
-unspecified = Domain #{const AF_UNSPEC}
+pattern Unspecified :: Family
+pattern Unspecified = Family #{const AF_UNSPEC}
 
 -- | The @AF_INET@ communications domain.
-internet :: Domain
-internet = Domain #{const AF_INET}
+pattern Internet :: Family
+pattern Internet = Family #{const AF_INET}
 
 -- | The @AF_INET6@ communications domain. POSIX declares raw sockets
 --   optional. However, they are included here for convenience. Please
 --   open an issue if this prevents this library from compiling on a
 --   POSIX-compliant operating system that anyone uses for haskell
 --   development.
-internet6 :: Domain
-internet6 = Domain #{const AF_INET6}
+pattern Internet6 :: Family
+pattern Internet6 = Family #{const AF_INET6}
 
 -- | The @MSG_OOB@ receive flag or send flag.
 outOfBand :: MessageFlags m
@@ -353,6 +401,7 @@ peekControlMessageHeaderLevel (Addr p) = do
   i <- #{peek struct cmsghdr, cmsg_level} (Ptr p)
   pure (Level i)
 
+-- | Get @cmsg_type@.
 peekControlMessageHeaderType :: Addr -> IO Type
 peekControlMessageHeaderType (Addr p) = do
   i <- #{peek struct cmsghdr, cmsg_type} (Ptr p)
@@ -363,17 +412,75 @@ peekControlMessageHeaderType (Addr p) = do
 -- advanceControlMessageHeaderData p =
 --   PM.plusAddr p (#{size struct cmsghdr})
 
+-- | Get @iov_base@.
 peekIOVectorBase :: Addr -> IO Addr
 peekIOVectorBase (Addr p) = do
   Ptr x <- #{peek struct iovec, iov_base} (Ptr p)
   pure (Addr x)
 
+-- | Get @iov_len@.
 peekIOVectorLength :: Addr -> IO CSize
 peekIOVectorLength (Addr p) = #{peek struct iovec, iov_len} (Ptr p)
 
 -- | The size of a serialized @msghdr@.
 sizeofMessageHeader :: CInt
 sizeofMessageHeader = #{size struct msghdr}
+
+-- | Get @ai_flags@.
+peekAddressInfoFlags :: Ptr AddressInfo -> IO AddressInfoFlags
+peekAddressInfoFlags ptr = do
+  x <- #{peek struct addrinfo, ai_flags} ptr
+  pure (AddressInfoFlags x)
+
+-- | Set @ai_flags@.
+pokeAddressInfoFlags :: Ptr AddressInfo -> AddressInfoFlags -> IO ()
+pokeAddressInfoFlags ptr (AddressInfoFlags x) = #{poke struct addrinfo, ai_flags} ptr x
+
+-- | Get @ai_family@.
+peekAddressInfoFamily :: Ptr AddressInfo -> IO Family
+peekAddressInfoFamily ptr = do
+  x <- #{peek struct addrinfo, ai_family} ptr
+  pure (Family x)
+
+-- | Get @ai_socktype@.
+peekAddressInfoSocketType :: Ptr AddressInfo -> IO Type
+peekAddressInfoSocketType ptr = do
+  x <- #{peek struct addrinfo, ai_socktype} ptr
+  pure (Type x)
+
+-- | Get @ai_protocol@.
+peekAddressInfoProtocol :: Ptr AddressInfo -> IO Protocol
+peekAddressInfoProtocol ptr = do
+  x <- #{peek struct addrinfo, ai_protocol} ptr
+  pure (Protocol x)
+
+-- | Get @ai_addrlen@.
+peekAddressInfoAddressLength :: Ptr AddressInfo -> IO CInt
+peekAddressInfoAddressLength ptr = #{peek struct addrinfo, ai_addrlen} ptr
+
+-- | Get @ai_addr@.
+peekAddressInfoAddress :: Ptr AddressInfo -> IO (Ptr SocketAddress)
+peekAddressInfoAddress ptr = #{peek struct addrinfo, ai_addr} ptr
+
+-- | Get @ai_next@.
+peekAddressInfoNext :: Ptr AddressInfo -> IO (Ptr AddressInfo)
+peekAddressInfoNext ptr = #{peek struct addrinfo, ai_next} ptr
+
+-- | Set @ai_family@.
+pokeAddressInfoFamily :: Ptr AddressInfo -> Family -> IO ()
+pokeAddressInfoFamily ptr (Family x) = #{poke struct addrinfo, ai_family} ptr x
+
+-- | Set @ai_socktype@.
+pokeAddressInfoSocketType :: Ptr AddressInfo -> Type -> IO ()
+pokeAddressInfoSocketType ptr (Type x) = #{poke struct addrinfo, ai_socktype} ptr x
+
+-- | Set @ai_protocol@.
+pokeAddressInfoProtocol :: Ptr AddressInfo -> Protocol -> IO ()
+pokeAddressInfoProtocol ptr (Protocol x) = #{poke struct addrinfo, ai_protocol} ptr x
+
+-- | The size of a serialized @addrinfo@.
+sizeofAddressInfo :: Int
+sizeofAddressInfo = #{size struct addrinfo}
 
 -- | The size of a serialized @iovec@.
 sizeofIOVector :: CInt

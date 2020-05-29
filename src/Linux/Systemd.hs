@@ -6,13 +6,13 @@ module Linux.Systemd
 import Foreign.C.Types (CInt(..))
 import System.Posix.Types (Fd(..))
 import Foreign.C.Error (Errno,getErrno)
-import Posix.Socket.Types (Type(..),Domain(..))
+import Posix.Socket.Types (Type(..),Family(..))
 
 foreign import ccall unsafe "systemd/sd-daemon.h sd_listen_fds"
   c_listenFds :: CInt -> IO CInt
 
 foreign import ccall unsafe "systemd/sd-daemon.h sd_is_socket"
-  c_isSocket :: Fd -> Domain -> Type -> CInt -> IO CInt
+  c_isSocket :: Fd -> Family -> Type -> CInt -> IO CInt
 
 -- | Check for file descriptors passed by the system manager. Returns
 -- the number of received file descriptors. If no file descriptors
@@ -24,7 +24,7 @@ listenFds a = c_listenFds a >>= errorsFromInt
 
 isSocket :: 
      Fd -- ^ File descriptor
-  -> Domain -- ^ Socket family
+  -> Family -- ^ Socket family
   -> Type -- ^ Socket type
   -> CInt -- ^ Positive: require listen mode. Zero: require non-listening mode.
   -> IO (Either Errno CInt)
