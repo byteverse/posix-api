@@ -52,6 +52,8 @@ module Posix.Socket
     -- ** Get Socket Option
   , uninterruptibleGetSocketOption
     -- ** Set Socket Option
+  , uninterruptibleSetSocketOption
+  , uninterruptibleSetSocketOptionByteArray
   , uninterruptibleSetSocketOptionInt
     -- ** Close
   , F.close
@@ -156,6 +158,7 @@ module Posix.Socket
   , PST.levelSocket
     -- ** Option Names
   , PST.optionError
+  , PST.bindToDevice
   , PST.broadcast
     -- ** Address Info
     -- *** Peek
@@ -309,6 +312,22 @@ foreign import ccall unsafe "sys/socket.h setsockopt_int"
                           -> OptionName
                           -> CInt -- option_value
                           -> IO CInt
+
+foreign import ccall unsafe "sys/socket.h setsockopt"
+  c_unsafe_setsockopt :: Fd
+                      -> Level
+                      -> OptionName
+                      -> Ptr Void -- option_val
+                      -> CInt -- option_len
+                      -> IO CInt
+
+foreign import ccall unsafe "sys/socket.h setsockopt"
+  c_unsafe_setsockopt_ba :: Fd
+                         -> Level
+                         -> OptionName
+                         -> ByteArray# -- option_val
+                         -> CInt -- option_len
+                         -> IO CInt
 
 -- Per the spec the type signature of connect is:
 --   int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
@@ -659,6 +678,33 @@ uninterruptibleSetSocketOptionInt ::
   -> IO (Either Errno ())
 uninterruptibleSetSocketOptionInt sock level optName optValue =
   c_unsafe_setsockopt_int sock level optName optValue >>= errorsFromInt_
+
+-- | Set the value for the option specified by the 'Option' argument for
+--   the socket specified by the 'Fd' argument. The
+--   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/getsockopt.html POSIX specification>
+--   of @getsockopt@ includes more details.
+uninterruptibleSetSocketOption ::
+     Fd -- ^ Socket
+  -> Level -- ^ Socket level
+  -> OptionName -- ^ Option name
+  -> Ptr Void -- ^ Option value
+  -> CInt -- ^ Option value length
+  -> IO (Either Errno ())
+uninterruptibleSetSocketOption sock level optName optValue optLen =
+  c_unsafe_setsockopt sock level optName optValue optLen >>= errorsFromInt_
+
+-- | Variant of 'uninterruptibleSetSocketOption' that accepts the option
+--   as a byte array instead of a pointer into unmanaged memory. The argument
+--   does not need to be pinned.
+uninterruptibleSetSocketOptionByteArray ::
+     Fd -- ^ Socket
+  -> Level -- ^ Socket level
+  -> OptionName -- ^ Option name
+  -> ByteArray -- ^ Option value
+  -> CInt -- ^ Option value length
+  -> IO (Either Errno ())
+uninterruptibleSetSocketOptionByteArray sock level optName (ByteArray optVal) optLen =
+  c_unsafe_setsockopt_ba sock level optName optVal optLen >>= errorsFromInt_
 
 -- | Send data from a byte array over a network socket. Users
 --   may specify an offset and a length to send fewer bytes than are

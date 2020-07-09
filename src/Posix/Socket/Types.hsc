@@ -69,6 +69,7 @@ module Posix.Socket.Types
   , levelSocket
     -- * Option Names
   , optionError
+  , bindToDevice
   , broadcast
     -- * AddressInfo
     -- ** Peek
@@ -388,6 +389,10 @@ levelSocket = Level #{const SOL_SOCKET}
 -- | Socket error status (e.g. @SO_ERROR@)
 optionError :: OptionName
 optionError = OptionName #{const SO_ERROR}
+
+-- | Bind to device (e.g. @SO_BINDTODEVICE@)
+bindToDevice :: OptionName
+bindToDevice = OptionName #{const SO_BINDTODEVICE}
 
 -- | Transmission of broadcast messages is supported (e.g. @SO_BROADCAST@)
 broadcast :: OptionName
