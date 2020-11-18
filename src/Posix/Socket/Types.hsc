@@ -394,6 +394,10 @@ optionError = OptionName #{const SO_ERROR}
 bindToDevice :: OptionName
 bindToDevice = OptionName #{const SO_BINDTODEVICE}
 
+-- | Allow reuse of local address (e.g. @SO_REUSEADDR@)
+reuseAddress :: OptionName
+reuseAddress = OptionName #{const SO_REUSEADDR}
+
 -- | Transmission of broadcast messages is supported (e.g. @SO_BROADCAST@)
 broadcast :: OptionName
 broadcast = OptionName #{const SO_BROADCAST}

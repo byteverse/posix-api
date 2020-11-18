@@ -1,4 +1,6 @@
 {-# language BangPatterns #-}
+{-# language DerivingStrategies #-}
+{-# language GeneralizedNewtypeDeriving #-}
 {-# language MagicHash #-}
 {-# language MultiWayIf #-}
 {-# language TypeApplications #-}
@@ -35,6 +37,22 @@ import qualified GHC.Exts as Exts
 
 -- | An unsliced byte sequence with @NUL@ as the final byte.
 newtype ManagedCString = ManagedCString ByteArray
+  deriving newtype Eq
+
+instance Semigroup ManagedCString where
+  ManagedCString a <> ManagedCString b = ManagedCString $ runByteArrayST $ do
+    let lenA = PM.sizeofByteArray a
+    let lenB = PM.sizeofByteArray b
+    dst <- PM.newByteArray (lenA + lenB - 1)
+    PM.copyByteArray dst 0 a 0 (lenA - 1)
+    PM.copyByteArray dst (lenA - 1) b 0 lenB
+    PM.unsafeFreezeByteArray dst
+
+instance Monoid ManagedCString where
+  mempty = ManagedCString $ runByteArrayST $ do
+    dst <- PM.newByteArray 1
+    PM.writeByteArray dst 0 (0 :: Word8)
+    PM.unsafeFreezeByteArray dst
 
 instance Exts.IsString ManagedCString where
   fromString = fromLatinString
