@@ -473,9 +473,9 @@ uninterruptibleSocketPair dom typ prot = do
 -- wrapper differs slightly from the type of its C counterpart. Remember to call
 -- 'uninterruptibleFreeAddressInfo' when finished with the result.
 getAddressInfo ::
-     CString -- * Node, identifies an Internet host
-  -> CString -- * Service
-  -> Ptr AddressInfo -- * Hints
+     CString -- ^ Node, identifies an Internet host
+  -> CString -- ^ Service
+  -> Ptr AddressInfo -- ^ Hints
   -> IO (Either Errno (Ptr AddressInfo))
 getAddressInfo !node !service !hints = do
   resBuf@(MutableByteArray resBuf#) <- PM.newPinnedByteArray (PM.sizeOf (undefined :: Ptr ()))
