@@ -71,6 +71,7 @@ module Posix.Socket.Types
   , optionError
   , bindToDevice
   , broadcast
+  , reuseAddress
     -- * AddressInfo
     -- ** Peek
   , peekAddressInfoFlags

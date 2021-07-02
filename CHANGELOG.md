@@ -13,6 +13,8 @@ This project adheres to the [Haskell Package Versioning Policy](https://pvp.hask
 - Add dedicated modules for peeking at structures.
 - Make compatible with GHC 8.10 by changing the way ArrayArray# is handled
   on the C side of the FFI.
+- Add `uninterruptibleSetSocketOption`.
+- Add socket options `SO_BINDTODEVICE` and `SO_REUSEADDR`.
 
 ## [0.3.4.0] - 2020-03-09
 

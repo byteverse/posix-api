@@ -160,6 +160,7 @@ module Posix.Socket
   , PST.optionError
   , PST.bindToDevice
   , PST.broadcast
+  , PST.reuseAddress
     -- ** Address Info
     -- *** Peek
   , PST.peekAddressInfoFlags
