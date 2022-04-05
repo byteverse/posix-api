@@ -14,6 +14,7 @@ module Posix.File
   , uninterruptibleOpen
   , uninterruptibleOpenMode
   , writeByteArray
+  , writeMutableByteArray
   , close
   , uninterruptibleClose
   , uninterruptibleErrorlessClose
@@ -40,17 +41,18 @@ module Posix.File
   , Types.exclusive
   ) where
 
-import Assertion (assertByteArrayPinned)
+import Assertion (assertByteArrayPinned,assertMutableByteArrayPinned)
 import Data.Bits ((.&.),(.|.))
 import Data.Primitive (ByteArray(..))
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.String.Managed (ManagedCString(..))
 import Foreign.C.Types (CInt(..),CSize(..))
-import GHC.Exts (ByteArray#)
+import GHC.Exts (ByteArray#,MutableByteArray#,RealWorld)
 import Posix.File.Types (CreationFlags(..),AccessMode(..),StatusFlags(..))
 import Posix.File.Types (DescriptorFlags(..))
 import System.Posix.Types (Fd(..),CSsize(..),CMode(..))
 import Data.Bytes.Types (Bytes(Bytes))
+import Data.Primitive (MutableByteArray(MutableByteArray))
 
 import qualified Posix.File.Types as Types
 
@@ -78,6 +80,9 @@ foreign import ccall unsafe "HaskellPosix.h write_offset_loop"
 
 foreign import ccall safe "HaskellPosix.h write_offset"
   c_safe_bytearray_write :: Fd -> ByteArray# -> Int -> CSize -> IO CSsize
+
+foreign import ccall safe "HaskellPosix.h write_offset"
+  c_safe_mutablebytearray_write :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> IO CSsize
 
 foreign import ccall unsafe "HaskellPosix.h open"
   c_unsafe_open :: ByteArray# -> CInt -> IO Fd
@@ -148,7 +153,7 @@ uninterruptibleWriteBytes !fd (Bytes (ByteArray buf) off len) =
 
 -- | Wrapper for @write(2)@ that takes a byte array and an offset.
 -- The byte array does not need to be pinned.
-uninterruptibleWriteByteArray :: 
+uninterruptibleWriteByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
   -> Int -- ^ Offset into source array
@@ -159,8 +164,8 @@ uninterruptibleWriteByteArray !fd (ByteArray buf) !off !len =
 
 -- | Wrapper for @write(2)@ that takes a byte array and an offset.
 -- Uses @safe@ FFI. The byte array must be pinned.
-writeByteArray :: 
-     Fd -- ^ Socket
+writeByteArray ::
+     Fd -- ^ File descriptor
   -> ByteArray -- ^ Source byte array
   -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
@@ -168,6 +173,18 @@ writeByteArray ::
 writeByteArray !fd !buf0 !off !len =
   let !(ByteArray buf1) = assertByteArrayPinned buf0
    in c_safe_bytearray_write fd buf1 off len >>= errorsFromSize
+
+-- | Variant of 'writeByteArray' that operates on mutable byte array.
+-- Uses @safe@ FFI. The byte array must be pinned.
+writeMutableByteArray ::
+     Fd -- ^ File descriptor
+  -> MutableByteArray RealWorld -- ^ Source byte array
+  -> Int -- ^ Offset into source array
+  -> CSize -- ^ Length in bytes
+  -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
+writeMutableByteArray !fd !buf0 !off !len =
+  let !(MutableByteArray buf1) = assertMutableByteArrayPinned buf0
+   in c_safe_mutablebytearray_write fd buf1 off len >>= errorsFromSize
 
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)
