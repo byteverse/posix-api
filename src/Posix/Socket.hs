@@ -1,4 +1,5 @@
 {-# language BangPatterns #-}
+{-# language CPP #-}
 {-# language DataKinds #-}
 {-# language DuplicateRecordFields #-}
 {-# language GADTSyntax #-}
@@ -215,7 +216,7 @@ import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
 import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#)
-import GHC.Exts (Addr#,TYPE,RuntimeRep(UnliftedRep))
+import GHC.Exts (Addr#,TYPE)
 import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Family(..),Protocol(..),Type(..),SocketAddress(..))
@@ -224,6 +225,12 @@ import Posix.Socket.Types (MessageFlags(..),Message(..),ShutdownType(..))
 import Posix.Socket.Types (Level(..),OptionName(..),OptionValue(..))
 import Posix.Socket.Types (AddressInfo)
 import System.Posix.Types (Fd(..),CSsize(..))
+
+#if MIN_VERSION_base(4,16,0)
+import GHC.Exts (RuntimeRep(BoxedRep),Levity(Unlifted))
+#else
+import GHC.Exts (RuntimeRep(UnliftedRep))
+#endif
 
 import qualified Posix.File as F
 import qualified Posix.Socket.Types as PST
@@ -770,7 +777,11 @@ writeVector fd buffers = do
   touchLifted newBufs
   pure r
 
+#if MIN_VERSION_base(4,16,0)
+data UList (a :: TYPE ('BoxedRep 'Unlifted)) where
+#else
 data UList (a :: TYPE 'UnliftedRep) where
+#endif
   UNil :: UList a
   UCons :: a -> UList a -> UList a
 
