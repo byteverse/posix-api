@@ -7,14 +7,19 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## [0.3.5.0] - 2020-??-??
+## [0.4.0.0] - 2022-12-08
+
+- Add `writeMutableByteArray`
+- In the 0.3.5.0 release, the major version was supposed to be bumped.
+  This is being done now instead.
+
+## [0.3.5.0] - 2021-07-02
 
 - Breaking: Start using pattern synonyms for macros.
 - Add dedicated modules for peeking at structures.
 - Make compatible with GHC 8.10 by changing the way ArrayArray# is handled
   on the C side of the FFI.
 - Add `uninterruptibleSetSocketOption`.
-- Add `writeMutableByteArray`.
 - Add socket options `SO_BINDTODEVICE` and `SO_REUSEADDR`.
 
 ## [0.3.4.0] - 2020-03-09
