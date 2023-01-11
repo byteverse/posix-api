@@ -55,7 +55,7 @@ tests = testGroup "tests"
 
 testSocketsA :: Assertion
 testSocketsA = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray b 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray a sample 0 5 mempty
@@ -68,7 +68,7 @@ testSocketsB = do
   let limit = 10
       wordSz = PM.sizeOf (undefined :: Int)
       cwordSz = fromIntegral wordSz :: CSize
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   lock <- PM.newEmptyMVar
   let go1 !(ix :: Int) !(n :: Int) = if (ix < limit)
         then do
@@ -95,7 +95,7 @@ testSocketsB = do
 
 testSocketsC :: Assertion
 testSocketsC = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   m <- PM.newEmptyMVar
   _ <- forkIO $ S.receiveByteArray a 5 mempty >>= PM.putMVar m
   bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
@@ -105,7 +105,7 @@ testSocketsC = do
 
 testSocketsD :: Assertion
 testSocketsD = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   _ <- forkIO $ do
     bytesSent <- demand =<< S.sendByteArray b sample 0 5 mempty
     when (bytesSent /= 5) (fail "testSocketsD: bytesSent was wrong")
@@ -114,7 +114,7 @@ testSocketsD = do
 
 testSocketsE :: Assertion
 testSocketsE = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   _ <- forkIO $ do
     threadWaitWrite b
     bytesSent <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
@@ -125,14 +125,14 @@ testSocketsE = do
 
 testSocketsF :: Assertion
 testSocketsF = do
-  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  a <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
   (expectedSzA,expectedSockAddrA) <- demand =<< S.uninterruptibleGetSocketName a 128
   when (expectedSzA > 128) (fail "testSocketsF: bad socket address size for socket A")
   portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
     Nothing -> fail "testSocketsF: not a sockaddr_in"
     Just (S.SocketAddressInternet {S.port}) -> pure port
-  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  b <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind b (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
   threadWaitWrite b
   bytesSent <- demand =<< S.uninterruptibleSendToByteArray b sample 0 5 mempty (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = portA, S.address = localhost}))
@@ -145,7 +145,7 @@ testSocketsF = do
 
 testSocketsG :: Assertion
 testSocketsG = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   _ <- forkIO $ do
     bytesSent <- demand =<< S.writeVector b
       ( E.fromList
@@ -159,7 +159,7 @@ testSocketsG = do
 
 testLinuxSocketsA :: Assertion
 testLinuxSocketsA = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   threadWaitWrite b
   bytesSent1 <- demand =<< S.uninterruptibleSendByteArray b sample 0 5 mempty
   threadWaitWrite b
@@ -172,7 +172,7 @@ testLinuxSocketsA = do
 
 testLinuxSocketsB :: Assertion
 testLinuxSocketsB = do
-  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  a <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
   (expectedSzA,expectedSockAddrA) <- demand
     =<< S.uninterruptibleGetSocketName a 128
@@ -181,7 +181,7 @@ testLinuxSocketsB = do
   portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
     Nothing -> fail "testLinixSocketsB: not a sockaddr_in"
     Just (S.SocketAddressInternet {S.port}) -> pure port
-  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  b <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind b
     (S.encodeSocketAddressInternet $ S.SocketAddressInternet
       { S.port = 0
@@ -208,7 +208,7 @@ testLinuxSocketsB = do
 
 testLinuxSocketsC :: Assertion
 testLinuxSocketsC = do
-  a <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  a <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind a (S.encodeSocketAddressInternet (S.SocketAddressInternet {S.port = 0, S.address = localhost}))
   (expectedSzA,expectedSockAddrA) <- demand
     =<< S.uninterruptibleGetSocketName a 128
@@ -217,7 +217,7 @@ testLinuxSocketsC = do
   portA <- case S.decodeSocketAddressInternet expectedSockAddrA of
     Nothing -> fail "testLinuxSocketsC: not a sockaddr_in"
     Just (S.SocketAddressInternet {S.port}) -> pure port
-  b <- demand =<< S.uninterruptibleSocket S.internet S.datagram S.defaultProtocol
+  b <- demand =<< S.uninterruptibleSocket S.Internet S.datagram S.defaultProtocol
   demand =<< S.uninterruptibleBind b
     (S.encodeSocketAddressInternet $ S.SocketAddressInternet
       { S.port = 0
@@ -262,7 +262,7 @@ testLinuxSocketsC = do
 -- that has happened.
 testLinuxEpollA :: Assertion
 testLinuxEpollA = do
-  (a,b) <- demand =<< S.uninterruptibleSocketPair S.unix S.datagram S.defaultProtocol
+  (a,b) <- demand =<< S.uninterruptibleSocketPair S.Unix S.datagram S.defaultProtocol
   epfd <- demand =<< Epoll.uninterruptibleCreate 1
   reg <- PM.newPrimArray 1
   PM.writePrimArray reg 0 $ Epoll.Event
