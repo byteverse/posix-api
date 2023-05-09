@@ -14,6 +14,7 @@ module Foreign.C.String.Managed
   , unterminated
   , fromBytes
   , fromLatinString
+  , fromShortText
   , pinnedFromBytes
   , pin
   , touch
@@ -25,6 +26,7 @@ import Control.Monad.ST.Run (runByteArrayST)
 import Data.Bytes.Types (Bytes(Bytes))
 import Data.Char (ord)
 import Data.Primitive (ByteArray(..),MutableByteArray)
+import Data.Text.Short (ShortText)
 import Data.Word (Word8)
 import Foreign.C.String (CString)
 import Foreign.Ptr (castPtr)
@@ -32,7 +34,9 @@ import GHC.Exts (Int(I#),Char(C#),ByteArray#,chr#,touch#)
 import GHC.IO (IO(IO))
 
 import qualified Data.Bytes as Bytes
+import qualified Data.Bytes.Text.Utf8 as Utf8
 import qualified Data.Primitive as PM
+import qualified Data.Text.Short as TS
 import qualified GHC.Exts as Exts
 
 -- | An unsliced byte sequence with @NUL@ as the final byte.
@@ -75,6 +79,9 @@ terminated (ManagedCString x) = Bytes.fromByteArray x
 
 unterminated :: ManagedCString -> Bytes
 unterminated (ManagedCString x) = Bytes x 0 (PM.sizeofByteArray x - 1)
+
+fromShortText :: ShortText -> ManagedCString
+fromShortText !ts = fromBytes (Utf8.fromShortText ts)
 
 -- | Copies the slice, appending a @NUL@ byte to the end.
 fromBytes :: Bytes -> ManagedCString

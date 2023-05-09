@@ -111,6 +111,7 @@ library
     , primitive-offset >= 0.2 && <0.3
     , primitive-unlifted >= 0.1 && <0.2
     , run-st >= 0.1.1 && <0.2
+    , text-short >=0.1.5
   hs-source-dirs: src
   if flag(assertions)
     hs-source-dirs: src-assertions
