@@ -7,6 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.4.0.1] - 2023-06-27
+
+- Build with GHC 9.4
+
 ## [0.4.0.0] - 2022-12-08
 
 - Add `writeMutableByteArray`
