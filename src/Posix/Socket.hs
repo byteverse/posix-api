@@ -206,7 +206,9 @@ import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
 import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),ByteArray(..))
-import Data.Primitive.Unlifted.Array (MutableUnliftedArray(..),UnliftedArray(..))
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray,UnliftedArray_(UnliftedArray))
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
+import Data.Primitive.Unlifted.Array.Primops (UnliftedArray#(UnliftedArray#),MutableUnliftedArray#)
 import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
 import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
 import Data.Word (Word8,Word16,Word32,byteSwap16,byteSwap32)
@@ -217,7 +219,7 @@ import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
 import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#)
 import GHC.Exts (Addr#,TYPE)
-import GHC.Exts (ArrayArray#,MutableArrayArray#,Int(I#))
+import GHC.Exts (Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
 import Posix.Socket.Types (Family(..),Protocol(..),Type(..),SocketAddress(..))
 import Posix.Socket.Types (SocketAddressInternet(..))
@@ -389,7 +391,7 @@ foreign import ccall unsafe "HaskellPosix.h sendmsg_b"
   c_unsafe_sendmsg_b :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 
 foreign import ccall unsafe "HaskellPosix.h sendmsg_bytearrays"
-  c_unsafe_sendmsg_bytearrays :: Fd -> ArrayArray# -> Int -> Int -> Int -> MessageFlags 'Send -> IO CSsize
+  c_unsafe_sendmsg_bytearrays :: Fd -> UnliftedArray# ByteArray# -> Int -> Int -> Int -> MessageFlags 'Send -> IO CSsize
 
 foreign import ccall safe "sys/uio.h writev"
   c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
@@ -1417,10 +1419,10 @@ touchUnliftedArray (UnliftedArray x) = touchUnliftedArray# x
 touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
 touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 
-touchMutableUnliftedArray# :: MutableArrayArray# RealWorld -> IO ()
+touchMutableUnliftedArray# :: MutableUnliftedArray# RealWorld a -> IO ()
 touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
-touchUnliftedArray# :: ArrayArray# -> IO ()
+touchUnliftedArray# :: UnliftedArray# a -> IO ()
 touchUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()

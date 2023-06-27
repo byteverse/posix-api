@@ -51,16 +51,18 @@ import Control.Monad (when)
 import Data.Bits ((.|.))
 import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
 import Data.Primitive (MutableByteArray(..),ByteArray(..),MutablePrimArray(..))
-import Data.Primitive.Unlifted.Array (MutableUnliftedArray(..),UnliftedArray)
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray)
+import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
 import Data.Word (Word8)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
-import GHC.Exts (Ptr(..),RealWorld,MutableByteArray#,Addr#,MutableArrayArray#,Int(I#))
+import GHC.Exts (Ptr(..),RealWorld,MutableArray#,MutableByteArray#,Addr#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
 import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
 import System.Posix.Types (Fd(..),CSsize(..))
+import Data.Primitive.Unlifted.Array.Primops (MutableUnliftedArray#(MutableUnliftedArray#))
 
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Unlifted.Array as PM
@@ -88,7 +90,7 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
        Fd
     -> MutableByteArray# RealWorld -- lengths
     -> MutableByteArray# RealWorld -- sockaddrs
-    -> MutableArrayArray# RealWorld -- buffers
+    -> MutableArray# RealWorld (MutableByteArray# RealWorld) -- buffers
     -> CUInt -- Length of msghdr array
     -> MessageFlags 'Receive
     -> IO CInt
@@ -97,7 +99,7 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_discard"
   c_unsafe_recvmmsg_sockaddr_discard ::
        Fd
     -> MutableByteArray# RealWorld -- lengths
-    -> MutableArrayArray# RealWorld -- buffers
+    -> MutableArray# RealWorld (MutableByteArray# RealWorld) -- buffers
     -> CUInt -- Length of msghdr array
     -> MessageFlags 'Receive
     -> IO CInt
@@ -137,7 +139,8 @@ uninterruptibleReceiveMultipleMessageA ::
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno (CUInt,UnliftedArray ByteArray))
 uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
-  bufs <- PM.unsafeNewUnliftedArray (cuintToInt msgCount)
+  placeholder <- PM.newByteArray 0
+  bufs <- PM.newUnliftedArray (cuintToInt msgCount) placeholder
   mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
   iovecsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt S.sizeofIOVector)
   let !mmsghdrsAddr@(Addr mmsghdrsAddr#) = ptrToAddr (PM.mutableByteArrayContents mmsghdrsBuf)
@@ -190,7 +193,8 @@ uninterruptibleReceiveMultipleMessageB ::
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno (CInt,ByteArray,CUInt,UnliftedArray ByteArray))
 uninterruptibleReceiveMultipleMessageB !s !expSockAddrSize !msgSize !msgCount !flags = do
-  bufs <- PM.unsafeNewUnliftedArray (cuintToInt msgCount)
+  placeholder <- PM.newByteArray 0
+  bufs <- PM.newUnliftedArray (cuintToInt msgCount) placeholder
   mmsghdrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt LST.sizeofMultipleMessageHeader)
   iovecsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt S.sizeofIOVector)
   sockaddrsBuf <- PM.newPinnedByteArray (cuintToInt msgCount * cintToInt expSockAddrSize)
@@ -226,7 +230,7 @@ uninterruptibleReceiveMultipleMessageC ::
   -> CUInt -- ^ Maximum number of datagrams to receive, length of buffers
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CInt)
-uninterruptibleReceiveMultipleMessageC !s (MutablePrimArray lens) (MutablePrimArray addrs) (PM.MutableUnliftedArray payloads) !msgCount !flags =
+uninterruptibleReceiveMultipleMessageC !s (MutablePrimArray lens) (MutablePrimArray addrs) (MutableUnliftedArray (MutableUnliftedArray# payloads)) !msgCount !flags =
   c_unsafe_recvmmsg_sockaddr_in s lens addrs payloads msgCount flags >>= errorsFromInt
 
 -- | All three buffer arguments need to have the same length (in elements, not bytes).
@@ -238,7 +242,7 @@ uninterruptibleReceiveMultipleMessageD ::
   -> CUInt -- ^ Maximum number of datagrams to receive, length of buffers
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CInt)
-uninterruptibleReceiveMultipleMessageD !s (MutablePrimArray lens) (PM.MutableUnliftedArray payloads) !msgCount !flags =
+uninterruptibleReceiveMultipleMessageD !s (MutablePrimArray lens) (MutableUnliftedArray (MutableUnliftedArray# payloads)) !msgCount !flags =
   c_unsafe_recvmmsg_sockaddr_discard s lens payloads msgCount flags >>= errorsFromInt
 
 -- This sets up an array of mmsghdr. Each msghdr has msg_iov set to
@@ -263,7 +267,7 @@ initializeMultipleMessageHeadersWithoutSockAddr bufs iovecsAddr mmsgHdrsAddr msg
 -- be an array of iovec with a single element. One giant buffer with
 -- space for all of the @sockaddr@s is used.
 initializeMultipleMessageHeadersWithSockAddr ::
-     MutableUnliftedArray RealWorld (MutableByteArray RealWorld) -- buffers
+     MutableUnliftedArray RealWorld (MutableByteArray RealWorld)
   -> Addr -- array of iovec
   -> Addr -- array of message headers
   -> Addr -- array of sockaddrs
@@ -382,14 +386,14 @@ errorsFromInt r = if r > (-1)
   then pure (Right r)
   else fmap Left getErrno
 
-touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
-touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
-
 touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
 touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 
-touchMutableUnliftedArray# :: MutableArrayArray# RealWorld -> IO ()
-touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
-
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
 touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+
+touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
+touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
+
+touchMutableUnliftedArray# :: MutableUnliftedArray# RealWorld a -> IO ()
+touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
