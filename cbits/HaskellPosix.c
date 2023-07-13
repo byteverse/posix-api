@@ -44,16 +44,16 @@ ssize_t write_offset_loop(int fd, const char *message, HsInt offset, size_t leng
 ssize_t write_offset(int fd, const char *message, HsInt offset, size_t length){
   return write(fd, (const void*)(message + offset), length);
 }
-ssize_t recv_offset(int socket, char *buffer, int offset, size_t length, int flags) {
+ssize_t recv_offset(int socket, char *buffer, HsInt offset, size_t length, int flags) {
   return recv(socket, (void*)(buffer + offset), length, flags);
 }
-ssize_t send_offset(int socket, const char *buffer, int offset, size_t length, int flags) {
+ssize_t send_offset(int socket, const char *buffer, HsInt offset, size_t length, int flags) {
   return send(socket, (const void*)(buffer + offset), length, flags);
 }
-ssize_t sendto_offset(int socket, const char *message, int offset, size_t length, int flags, const struct sockaddr *dest_addr, socklen_t dest_len){
+ssize_t sendto_offset(int socket, const char *message, HsInt offset, size_t length, int flags, const struct sockaddr *dest_addr, socklen_t dest_len){
   return sendto(socket, (const void*)(message + offset), length, flags, dest_addr, dest_len);
 }
-ssize_t sendto_inet_offset(int socket, const char *message, int offset, size_t length, int flags, uint16_t port, uint32_t inet_addr){
+ssize_t sendto_inet_offset(int socket, const char *message, HsInt offset, size_t length, int flags, uint16_t port, uint32_t inet_addr){
   struct sockaddr_in dest;
   memset(&dest, 0, sizeof(dest));
   dest.sin_family = AF_INET;
@@ -69,10 +69,10 @@ ssize_t sendto_inet_addr(int socket, const void *message, size_t length, int fla
   dest.sin_port = port;
   return sendto(socket, message, length, flags, (struct sockaddr*)&dest, sizeof(dest));
 }
-ssize_t recvfrom_offset(int socket, char *restrict buffer, int offset, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict address_len) {
+ssize_t recvfrom_offset(int socket, char *restrict buffer, HsInt offset, size_t length, int flags, struct sockaddr *restrict address, socklen_t *restrict address_len) {
   return recvfrom(socket, (void*)(buffer + offset), length, flags, address, address_len);
 }
-ssize_t recvfrom_offset_peerless(int socket, char *restrict buffer, int offset, size_t length, int flags) {
+ssize_t recvfrom_offset_peerless(int socket, char *restrict buffer, HsInt offset, size_t length, int flags) {
   return recvfrom(socket, (void*)(buffer + offset), length, flags, NULL, NULL);
 }
 ssize_t recvfrom_addr_peerless(int socket, void *restrict buffer, size_t length, int flags) {
@@ -120,24 +120,14 @@ int setsockopt_int(int socket, int level, int option_name, int option_value) {
   return setsockopt(socket,level,option_name,&option_value,sizeof(int));
 }
 
-// There are some compatibility macros in here. Before GHC 8.10,
-// no offset is applied to ArrayArray#.
 ssize_t sendmsg_bytearrays
   ( int sockfd
-#if __GLASGOW_HASKELL__ >= 810
   , StgArrBytes **arrs // used for input
-#else
-  , StgMutArrPtrs *arr // used for input
-#endif
   , HsInt off // offset into input chunk array
   , HsInt len0 // number of chunks to send
   , HsInt offC // offset into first chunk
   , int flags
   ) {
-#if __GLASGOW_HASKELL__ < 810
-  StgClosure **arrPayload = arr->payload;
-  StgArrBytes **arrs = (StgArrBytes**)arrPayload;
-#endif
   struct iovec bufs[MAX_BYTEARRAYS];
   HsInt len1 = len0 > MAX_BYTEARRAYS ? MAX_BYTEARRAYS : len0;
   // We must handle the first chunk specially since
@@ -217,24 +207,14 @@ ssize_t sendmsg_b
   return sendmsg(sockfd,&msg,flags);
 }
 
-// There are some compatibility macros in here. Before GHC 8.10,
-// no offset is applied to ArrayArray#.
 int recvmmsg_sockaddr_in
   ( int sockfd
   , int *lens // used for output
   , struct sockaddr_in *addrs // used for output
-#if __GLASGOW_HASKELL__ >= 810
   , StgArrBytes **bufs // used for output
-#else
-  , StgMutArrPtrs *arr // used for output
-#endif
   , unsigned int vlen
   , int flags
   ) {
-#if __GLASGOW_HASKELL__ < 810
-  StgClosure **bufsX = arr->payload;
-  StgArrBytes **bufs = (StgArrBytes**)bufsX;
-#endif
   // TODO: It's probably better to statically pick
   // out a maximum size for these. On the C stack,
   // the cost of doing this is basically nothing.

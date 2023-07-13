@@ -359,28 +359,28 @@ foreign import ccall unsafe "sys/socket.h connect"
 foreign import ccall safe "sys/socket.h send"
   c_safe_addr_send :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall safe "sys/socket.h send_offset"
-  c_safe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+  c_safe_bytearray_send :: Fd -> ByteArray# -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall safe "sys/socket.h send_offset"
-  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+  c_safe_mutablebytearray_send :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall safe "sys/socket.h send"
   c_safe_mutablebytearray_no_offset_send :: Fd -> MutableByteArray# RealWorld -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send"
   c_unsafe_addr_send :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send_offset"
-  c_unsafe_bytearray_send :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+  c_unsafe_bytearray_send :: Fd -> ByteArray# -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
 foreign import ccall unsafe "sys/socket.h send_offset"
-  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> IO CSsize
+  c_unsafe_mutable_bytearray_send :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> IO CSsize
 
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
-  c_unsafe_bytearray_sendto :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
+  c_unsafe_bytearray_sendto :: Fd -> ByteArray# -> Int -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
 -- The ByteArray# (second to last argument) is a SocketAddress.
 foreign import ccall unsafe "sys/socket.h sendto_offset"
-  c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
+  c_unsafe_mutable_bytearray_sendto :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> ByteArray# -> CInt -> IO CSsize
 foreign import ccall unsafe "sys/socket.h sendto_inet_offset"
-  c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
+  c_unsafe_mutable_bytearray_sendto_inet :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 foreign import ccall unsafe "HaskellPosix.h sendto_inet_offset"
-  c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> CInt -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
+  c_unsafe_bytearray_sendto_inet :: Fd -> ByteArray# -> Int -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 foreign import ccall unsafe "HaskellPosix.h sendto_inet_addr"
   c_unsafe_addr_sendto_inet :: Fd -> Addr# -> CSize -> MessageFlags 'Send -> Word16 -> Word32 -> IO CSsize
 
@@ -402,15 +402,15 @@ foreign import ccall safe "sys/socket.h recv"
 foreign import ccall unsafe "sys/socket.h recv"
   c_unsafe_addr_recv :: Fd -> Addr# -> CSize -> MessageFlags 'Receive -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recv_offset"
-  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> IO CSsize
+  c_unsafe_mutable_byte_array_recv :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Receive -> IO CSsize
 
 -- The last two arguments are SocketAddress and Ptr CInt.
 foreign import ccall unsafe "sys/socket.h recvfrom_offset"
-  c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> CInt -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
+  c_unsafe_mutable_byte_array_recvfrom :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> MessageFlags 'Receive -> MutableByteArray# RealWorld -> MutableByteArray# RealWorld -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_offset_peerless"
   c_unsafe_mutable_byte_array_peerless_recvfrom ::
        Fd
-    -> MutableByteArray# RealWorld -> CInt -> CSize
+    -> MutableByteArray# RealWorld -> Int -> CSize
     -> MessageFlags 'Receive -> IO CSsize
 foreign import ccall unsafe "sys/socket.h recvfrom_addr_peerless"
   c_unsafe_addr_peerless_recvfrom ::
@@ -724,7 +724,7 @@ uninterruptibleSetSocketOptionByteArray sock level optName (ByteArray optVal) op
 sendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
@@ -732,7 +732,7 @@ sendByteArray fd b@(ByteArray b#) off len flags = if isByteArrayPinned b
   then errorsFromSize =<< c_safe_bytearray_send fd b# off len flags
   else do
     x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
-    PM.copyByteArray x (cintToInt off) b 0 (csizeToInt len)
+    PM.copyByteArray x off b 0 (csizeToInt len)
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
 -- | Write data from multiple byte arrays to the file/socket associated
@@ -868,7 +868,7 @@ uninterruptibleSendByteArrays !fd (UnliftedArray arrs)
 sendMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
@@ -876,7 +876,7 @@ sendMutableByteArray fd b@(MutableByteArray b#) off len flags = if isMutableByte
   then errorsFromSize =<< c_safe_mutablebytearray_send fd b# off len flags
   else do
     x@(MutableByteArray x#) <- PM.newPinnedByteArray (csizeToInt len)
-    PM.copyMutableByteArray x (cintToInt off) b 0 (csizeToInt len)
+    PM.copyMutableByteArray x off b 0 (csizeToInt len)
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
 -- | Send data from an address over a network socket. This is not guaranteed
@@ -912,7 +912,7 @@ uninterruptibleSend fd (Addr addr) len flags =
 uninterruptibleSendByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
@@ -926,7 +926,7 @@ uninterruptibleSendByteArray fd (ByteArray b) off len flags =
 uninterruptibleSendMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source mutable byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes pushed to send buffer
@@ -941,7 +941,7 @@ uninterruptibleSendMutableByteArray fd (MutableByteArray b) off len flags =
 uninterruptibleSendToByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> SocketAddress -- ^ Socket Address
@@ -956,7 +956,7 @@ uninterruptibleSendToByteArray fd (ByteArray b) off len flags (SocketAddress a@(
 uninterruptibleSendToInternetByteArray ::
      Fd -- ^ Socket
   -> ByteArray -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> SocketAddressInternet -- ^ Socket Address
@@ -986,7 +986,7 @@ uninterruptibleSendToInternet fd (Addr b) len flags (SocketAddressInternet{port,
 uninterruptibleSendToMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> SocketAddress -- ^ Socket Address
@@ -1001,7 +1001,7 @@ uninterruptibleSendToMutableByteArray fd (MutableByteArray b) off len flags (Soc
 uninterruptibleSendToInternetMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Source byte array
-  -> CInt -- ^ Offset into source array
+  -> Int -- ^ Offset into source array
   -> CSize -- ^ Length in bytes
   -> MessageFlags 'Send -- ^ Flags
   -> SocketAddressInternet -- ^ Socket Address
@@ -1067,7 +1067,7 @@ uninterruptibleReceive !fd (Addr !addr) !len !flags =
 uninterruptibleReceiveMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
-  -> CInt -- ^ Destination offset
+  -> Int -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Bytes received into array
@@ -1081,7 +1081,7 @@ uninterruptibleReceiveMutableByteArray !fd (MutableByteArray !b) !off !len !flag
 uninterruptibleReceiveFromMutableByteArray ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
-  -> CInt -- ^ Destination offset
+  -> Int -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
   -> MessageFlags 'Receive -- ^ Flags
   -> CInt -- ^ Maximum socket address size
@@ -1144,7 +1144,7 @@ uninterruptibleReceiveFromInternetMutableByteArray !fd
 uninterruptibleReceiveFromMutableByteArray_ ::
      Fd -- ^ Socket
   -> MutableByteArray RealWorld -- ^ Destination byte array
-  -> CInt -- ^ Destination offset
+  -> Int -- ^ Destination offset
   -> CSize -- ^ Maximum bytes to receive
   -> MessageFlags 'Receive -- ^ Flags
   -> IO (Either Errno CSize) -- ^ Number of bytes received into array
