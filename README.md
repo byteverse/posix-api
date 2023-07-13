@@ -33,24 +33,6 @@ with these guidelines will be accepted. Unfortunately, there is some
 grey area when it comes to what a "minimal binding" to a function
 is. Discussion may sometimes be necessary to refine the guidelines.
 
-## Build Instructions
-
-This library relies on a currently-unreleased version of `hsc2hs` in
-order to build. In order to try out this library, try:
-
-```
-~/dev $ git clone https://github.com/haskell/hsc2hs
-~/dev $ cd hsc2hs
-~/dev/hsc2hs $ cabal install
-~/dev/hsc2hs $ cd ..
-~/dev $ git clone https://github.com/andrewthad/posix-api
-~/dev $ cd posix-api
-~/dev/posix-api $ cabal new-build --with-hsc2hs=~/.cabal/bin/hsc2hs
-```
-
-This will build `posix-api` with the unreleased version of the `hsc2hs`
-tool.
-
 ## Infelicities
 
 This project currently includes some Linux-specific code. It in the
