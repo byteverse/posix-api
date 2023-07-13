@@ -7,6 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.6.0.1] - 2023-07-13
+
+- Fix mistake in header file that caused builds to fail
+
 ## [0.6.0.0] - 2023-07-13
 
 - Use Int instead of CInt for all offsets into byte arrays
