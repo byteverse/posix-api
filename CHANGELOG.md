@@ -7,6 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.5.0.0] - 2023-07-13
+
+- Move Linux.Systemd to systemd-api library to make docs build on hackage.
+
 ## [0.4.0.1] - 2023-06-27
 
 - Build with GHC 9.4
