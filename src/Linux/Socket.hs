@@ -12,6 +12,7 @@ module Linux.Socket
   , uninterruptibleReceiveMultipleMessageC
   , uninterruptibleReceiveMultipleMessageD
   , uninterruptibleAccept4
+  , uninterruptibleAccept4_
     -- * Types
   , SocketFlags(..)
     -- * Option Names
@@ -49,26 +50,28 @@ import Prelude hiding (truncate)
 
 import Control.Monad (when)
 import Data.Bits ((.|.))
-import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
 import Data.Primitive (MutableByteArray(..),ByteArray(..),MutablePrimArray(..))
+import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
+import Data.Primitive.Unlifted.Array.Primops (MutableUnliftedArray#(MutableUnliftedArray#))
+import Data.Void (Void)
 import Data.Word (Word8)
 import Foreign.C.Error (Errno,getErrno)
 import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
+import Foreign.Ptr (nullPtr)
 import GHC.Exts (Ptr(..),RealWorld,MutableArray#,MutableByteArray#,Addr#,Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
 import GHC.IO (IO(..))
 import Linux.Socket.Types (SocketFlags(..))
 import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
 import System.Posix.Types (Fd(..),CSsize(..))
-import Data.Primitive.Unlifted.Array.Primops (MutableUnliftedArray#(MutableUnliftedArray#))
 
+import qualified Control.Monad.Primitive as PM
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Unlifted.Array as PM
-import qualified Control.Monad.Primitive as PM
-import qualified Posix.Socket as S
 import qualified Linux.Socket.Types as LST
+import qualified Posix.Socket as S
 
 foreign import ccall unsafe "sys/socket.h recvmmsg"
   c_unsafe_addr_recvmmsg :: Fd
@@ -84,6 +87,17 @@ foreign import ccall unsafe "sys/socket.h accept4"
                    -> MutableByteArray# RealWorld -- Ptr CInt
                    -> SocketFlags
                    -> IO Fd
+
+-- Variant of c_unsafe_ptr_accept4 that uses Ptr instead of MutableByteArray.
+-- Currently, we expect that the two pointers are set to NULL.
+-- This is only used internally.
+foreign import ccall unsafe "sys/socket.h accept4"
+  c_unsafe_ptr_accept4 ::
+        Fd
+     -> Ptr Void -- SocketAddress
+     -> Ptr Void -- Ptr CInt
+     -> SocketFlags
+     -> IO Fd
 
 foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
   c_unsafe_recvmmsg_sockaddr_in ::
@@ -366,6 +380,19 @@ uninterruptibleAccept4 !sock !maxSz !flags = do
         else pure ()
       sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
       pure (Right (sz,SocketAddress sockAddr,r))
+    else fmap Left getErrno
+
+-- | Variant of 'uninterruptibleAccept4' that requests that the kernel not
+-- include the socket address in its reponse.
+uninterruptibleAccept4_ ::
+     Fd -- ^ Listening socket
+  -> SocketFlags -- ^ Set non-blocking and close-on-exec without extra syscall
+  -> IO (Either Errno Fd) -- ^ Connected socket
+{-# inline uninterruptibleAccept4_ #-}
+uninterruptibleAccept4_ !sock !flags = do
+  r <- c_unsafe_ptr_accept4 sock nullPtr nullPtr flags
+  if r > (-1)
+    then pure (Right r)
     else fmap Left getErrno
 
 cintToInt :: CInt -> Int

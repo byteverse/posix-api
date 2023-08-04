@@ -7,6 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.6.1.0] - 2023-08-04
+
+- Add `uninterruptibleAccept4_`
+
 ## [0.6.0.1] - 2023-07-13
 
 - Fix mistake in header file that caused builds to fail
