@@ -26,13 +26,15 @@
 // way to support providing an offset (without just copying the bytes
 // into pinned memory) is to use a wrapper.
 
-ssize_t write_offset_loop(int fd, const char *message, HsInt offset, size_t length){
+// This returns an error code, not a length of written bytes. The error
+// code zero means "no error".
+int write_offset_loop(int fd, const char *message, HsInt offset, size_t length){
   ssize_t r;
   size_t bytesSent;
   const char* buf = message + offset;
   while(length > 0){
     if ((r = write(fd, (const void*)buf, length)) == -1) {
-      return (-1);
+      return errno;
     } else {
       bytesSent = (size_t)r;
       buf = buf + bytesSent;

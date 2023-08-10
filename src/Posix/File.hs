@@ -1,5 +1,6 @@
 {-# language BangPatterns #-}
 {-# language BinaryLiterals #-}
+{-# language LambdaCase #-}
 {-# language MagicHash #-}
 {-# language TypeApplications #-}
 {-# language UnliftedFFITypes #-}
@@ -11,6 +12,8 @@ module Posix.File
   , uninterruptibleWriteByteArray
   , uninterruptibleWriteBytes
   , uninterruptibleWriteBytesCompletely
+  , uninterruptibleWriteBytesCompletelyErrno
+  , writeBytesCompletelyErrno
   , uninterruptibleOpen
   , uninterruptibleOpenMode
   , writeByteArray
@@ -44,7 +47,7 @@ module Posix.File
 import Assertion (assertByteArrayPinned,assertMutableByteArrayPinned)
 import Data.Bits ((.&.),(.|.))
 import Data.Primitive (ByteArray(..))
-import Foreign.C.Error (Errno,getErrno)
+import Foreign.C.Error (Errno(Errno),getErrno,eOK)
 import Foreign.C.String.Managed (ManagedCString(..))
 import Foreign.C.Types (CInt(..),CSize(..))
 import GHC.Exts (ByteArray#,MutableByteArray#,RealWorld)
@@ -76,7 +79,10 @@ foreign import ccall unsafe "HaskellPosix.h write_offset"
   c_unsafe_bytearray_write :: Fd -> ByteArray# -> Int -> CSize -> IO CSsize
 
 foreign import ccall unsafe "HaskellPosix.h write_offset_loop"
-  c_unsafe_bytearray_write_loop :: Fd -> ByteArray# -> Int -> CSize -> IO CInt
+  c_unsafe_bytearray_write_loop :: Fd -> ByteArray# -> Int -> CSize -> IO Errno
+
+foreign import ccall safe "HaskellPosix.h write_offset_loop"
+  c_safe_bytearray_write_loop :: Fd -> ByteArray# -> Int -> CSize -> IO Errno
 
 foreign import ccall safe "HaskellPosix.h write_offset"
   c_safe_bytearray_write :: Fd -> ByteArray# -> Int -> CSize -> IO CSsize
@@ -137,9 +143,30 @@ uninterruptibleWriteBytesCompletely ::
      Fd -- ^ File descriptor
   -> Bytes -- ^ Source bytes
   -> IO (Either Errno ())
-uninterruptibleWriteBytesCompletely !fd (Bytes (ByteArray buf) off len) =
+uninterruptibleWriteBytesCompletely !fd !b = do
+  e <- uninterruptibleWriteBytesCompletelyErrno fd b
+  if e == eOK
+    then pure (Right ())
+    else pure (Left e)
+
+-- | Variant of 'uninterruptibleWriteBytesCompletely' that uses errno 0
+-- to communicate success.
+uninterruptibleWriteBytesCompletelyErrno ::
+     Fd -- ^ File descriptor
+  -> Bytes -- ^ Source bytes
+  -> IO Errno
+uninterruptibleWriteBytesCompletelyErrno !fd (Bytes (ByteArray buf) off len) =
   c_unsafe_bytearray_write_loop fd buf off (fromIntegral @Int @CSize len)
-    >>= errorsFromInt_
+
+-- | Wrapper for @write(2)@ that takes a slice of bytes and an offset.
+-- The byte array backing the slice must be pinned.
+writeBytesCompletelyErrno ::
+     Fd -- ^ File descriptor
+  -> Bytes -- ^ Source bytes
+  -> IO Errno
+writeBytesCompletelyErrno !fd (Bytes buf0 off len) =
+  let !(ByteArray buf1) = assertByteArrayPinned buf0
+   in c_safe_bytearray_write_loop fd buf1 off (fromIntegral @Int @CSize len)
 
 -- | Wrapper for @write(2)@ that takes a slice of bytes and an offset.
 -- The byte array backing the slice does not need to be pinned.
@@ -173,6 +200,8 @@ writeByteArray ::
 writeByteArray !fd !buf0 !off !len =
   let !(ByteArray buf1) = assertByteArrayPinned buf0
    in c_safe_bytearray_write fd buf1 off len >>= errorsFromSize
+
+-- writeByteArrayCompletely ::
 
 -- | Variant of 'writeByteArray' that operates on mutable byte array.
 -- Uses @safe@ FFI. The byte array must be pinned.

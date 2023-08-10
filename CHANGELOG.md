@@ -7,6 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.6.2.0] - 2023-??-??
+
+- Add `uninterruptibleWriteBytesCompletelyErrno`
+- Add `writeBytesCompletelyErrno`
+
 ## [0.6.1.0] - 2023-08-04
 
 - Add `uninterruptibleAccept4_`
