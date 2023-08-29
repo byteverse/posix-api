@@ -102,7 +102,7 @@ library
     Posix.Socket.Types
     Assertion
   build-depends:
-    , base >=4.17.1 && <5
+    , base >=4.16.3 && <5
     , byte-order >= 0.1.2 && <0.2
     , byteslice >= 0.2.10 && <0.3
     , primitive >= 0.7 && <0.10

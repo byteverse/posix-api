@@ -16,6 +16,7 @@ module Posix.File
   , writeBytesCompletelyErrno
   , uninterruptibleOpen
   , uninterruptibleOpenMode
+  , uninterruptibleOpenUntypedFlags
   , writeByteArray
   , writeMutableByteArray
   , close
@@ -116,6 +117,15 @@ uninterruptibleOpen ::
   -> IO (Either Errno Fd)
 uninterruptibleOpen (ManagedCString (ByteArray name)) (AccessMode x) (CreationFlags y) (StatusFlags z) =
   c_unsafe_open name (x .|. y .|. z) >>= errorsFromFd
+
+-- | Variant of 'uninterruptibleOpen' that does not help the caller with
+-- the types of the flags.
+uninterruptibleOpenUntypedFlags ::
+     ManagedCString -- ^ NULL-terminated file name
+  -> CInt -- ^ Flags
+  -> IO (Either Errno Fd)
+uninterruptibleOpenUntypedFlags (ManagedCString (ByteArray name)) x =
+  c_unsafe_open name x >>= errorsFromFd
 
 uninterruptibleOpenMode ::
      ManagedCString -- ^ NULL-terminated file name
