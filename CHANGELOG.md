@@ -7,6 +7,14 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.7.0.0] - 2023-08-30
+
+- For now, remove all of the functions that work on UnliftedArray. These
+  will be added back later once hackage starts using GHC 9.4. They are
+  now guarded by CPP, so if anyone was using them, build this library
+  with the `UNLIFTEDARRAYFUNCTIONS` flag to get them back.
+- Add `uninterruptibleConnectPtr` for better compatibility with `network`.
+
 ## [0.6.1.0] - 2023-08-14
 
 - Add `uninterruptibleWriteBytesCompletelyErrno`

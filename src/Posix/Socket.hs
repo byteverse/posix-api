@@ -42,6 +42,7 @@ module Posix.Socket
     -- ** Connect
   , connect
   , uninterruptibleConnect
+  , uninterruptibleConnectPtr
     -- ** Listen
   , uninterruptibleListen
     -- ** Accept
@@ -76,7 +77,9 @@ module Posix.Socket
   , uninterruptibleSendToInternetByteArray
   , uninterruptibleSendToInternetMutableByteArray
     -- ** Write Vector
+#if defined(UNLIFTEDARRAYFUNCTIONS)
   , writeVector
+#endif
     -- ** Receive
   , receive
   , receiveByteArray
@@ -90,12 +93,16 @@ module Posix.Socket
   , uninterruptibleReceiveFromInternetMutableByteArray
     -- ** Receive Message
     -- $receiveMessage
+#if defined(UNLIFTEDARRAYFUNCTIONS)
   , uninterruptibleReceiveMessageA
   , uninterruptibleReceiveMessageB
+#endif
     -- ** Send Message
   , uninterruptibleSendMessageA
   , uninterruptibleSendMessageB
+#if defined(UNLIFTEDARRAYFUNCTIONS)
   , uninterruptibleSendByteArrays
+#endif
     -- ** Byte-Order Conversion
     -- $conversion
   , hostToNetworkLong
@@ -206,9 +213,13 @@ import GHC.ByteOrder (ByteOrder(BigEndian,LittleEndian),targetByteOrder)
 import GHC.IO (IO(..))
 import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
 import Data.Primitive (MutablePrimArray(..),MutableByteArray(..),ByteArray(..))
+
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray,UnliftedArray_(UnliftedArray))
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
 import Data.Primitive.Unlifted.Array.Primops (UnliftedArray#(UnliftedArray#),MutableUnliftedArray#)
+#endif
+
 import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
 import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
 import Data.Word (Word8,Word16,Word32,byteSwap16,byteSwap32)
@@ -217,7 +228,7 @@ import Foreign.C.Error (Errno(Errno),getErrno)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt(..),CSize(..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr,RealWorld,ByteArray#,MutableByteArray#)
+import GHC.Exts (Ptr(Ptr),RealWorld,ByteArray#,MutableByteArray#)
 import GHC.Exts (Addr#,TYPE)
 import GHC.Exts (Int(I#))
 import GHC.Exts (shrinkMutableByteArray#,touch#)
@@ -237,7 +248,9 @@ import GHC.Exts (RuntimeRep(UnliftedRep))
 import qualified Posix.File as F
 import qualified Posix.Socket.Types as PST
 import qualified Data.Primitive as PM
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 import qualified Data.Primitive.Unlifted.Array as PM
+#endif
 import qualified Control.Monad.Primitive as PM
 import qualified GHC.Exts as Exts
 
@@ -348,6 +361,8 @@ foreign import ccall safe "sys/socket.h connect"
   c_safe_mutablebytearray_connect :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CInt
 foreign import ccall unsafe "sys/socket.h connect"
   c_unsafe_connect :: Fd -> ByteArray# -> CInt -> IO CInt
+foreign import ccall unsafe "sys/socket.h connect"
+  c_unsafe_connect_addr :: Fd -> Addr# -> CInt -> IO CInt
 
 -- There are several options for wrapping send. Both safe and unsafe
 -- are useful. Additionally, in the unsafe category, we also
@@ -390,8 +405,10 @@ foreign import ccall unsafe "HaskellPosix.h sendmsg_a"
 foreign import ccall unsafe "HaskellPosix.h sendmsg_b"
   c_unsafe_sendmsg_b :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> Addr# -> CSize -> MessageFlags 'Send -> IO CSsize
 
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 foreign import ccall unsafe "HaskellPosix.h sendmsg_bytearrays"
   c_unsafe_sendmsg_bytearrays :: Fd -> UnliftedArray# ByteArray# -> Int -> Int -> Int -> MessageFlags 'Send -> IO CSsize
+#endif
 
 foreign import ccall safe "sys/uio.h writev"
   c_safe_writev :: Fd -> MutableByteArray# RealWorld -> CInt -> IO CSsize
@@ -548,6 +565,14 @@ uninterruptibleConnect ::
   -> IO (Either Errno ())
 uninterruptibleConnect fd (SocketAddress sockAddr@(ByteArray sockAddr#)) =
   c_unsafe_connect fd sockAddr# (intToCInt (PM.sizeofByteArray sockAddr)) >>= errorsFromInt_
+
+uninterruptibleConnectPtr ::
+     Fd -- ^ Fd
+  -> Ptr a -- ^ Socket address
+  -> Int -- ^ Size of socket address
+  -> IO (Either Errno ())
+uninterruptibleConnectPtr !fd (Ptr sockAddr#) !sz =
+  c_unsafe_connect_addr fd sockAddr# (intToCInt sz) >>= errorsFromInt_
 
 -- | Extract the first connection on the queue of pending connections. The
 --   <http://pubs.opengroup.org/onlinepubs/9699919799/functions/accept.html POSIX specification>
@@ -735,50 +760,6 @@ sendByteArray fd b@(ByteArray b#) off len flags = if isByteArrayPinned b
     PM.copyByteArray x off b 0 (csizeToInt len)
     errorsFromSize =<< c_safe_mutablebytearray_no_offset_send fd x# len flags
 
--- | Write data from multiple byte arrays to the file/socket associated
---   with the file descriptor. This does not support slicing. The
---   <http://pubs.opengroup.org/onlinepubs/009604499/functions/writev.html POSIX specification>
---   of @writev@ includes more details.
-writeVector ::
-     Fd -- ^ Socket
-  -> UnliftedArray ByteArray -- ^ Source byte arrays
-  -> IO (Either Errno CSize)
-writeVector fd buffers = do
-  iovecs@(MutableByteArray iovecs#) :: MutableByteArray RealWorld <-
-    PM.newPinnedByteArray
-      (cintToInt PST.sizeofIOVector * PM.sizeofUnliftedArray buffers)
-
-  -- We construct a list of the new buffers for the sole purpose
-  -- of ensuring that we can touch the list later to keep all
-  -- the new buffers live.
-  newBufs <- foldDownward (PM.sizeofUnliftedArray buffers) UNil $ \newBufs i -> do
-    let !buf = PM.indexUnliftedArray buffers i
-    pinByteArray buf >>= \case
-      Nothing -> do
-        let buffer = buf
-        let targetAddr :: Addr
-            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
-              (i * cintToInt PST.sizeofIOVector)
-        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
-        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
-        pure newBufs
-      Just buffer -> do
-        let targetAddr :: Addr
-            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
-              (i * cintToInt PST.sizeofIOVector)
-        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
-        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
-        pure (UCons (unByteArray buffer) newBufs)
-  r <- errorsFromSize =<<
-    c_safe_writev fd iovecs# (intToCInt (PM.sizeofUnliftedArray buffers))
-  -- Touching both the unlifted array and the list of new buffers
-  -- here is crucial to ensuring that
-  -- the buffers do not get GCed before c_safe_writev. Just touching
-  -- them should keep all of their children alive too.
-  touchUnliftedArray buffers
-  touchLifted newBufs
-  pure r
-
 #if MIN_VERSION_base(4,16,0)
 data UList (a :: TYPE ('BoxedRep 'Unlifted)) where
 #else
@@ -841,23 +822,6 @@ uninterruptibleSendMessageB fd
   (MutableByteArrayOffset{array,offset}) lenB
   (Addr addr) lenA flags =
     c_unsafe_sendmsg_b fd (unMba array) offset lenB addr lenA flags
-      >>= errorsFromSize
-
--- | Send many immutable byte arrays with @sendmsg@.
--- This accepts a slice into the chunks. Additionally,
--- this accepts an offset into the first chunk.
-uninterruptibleSendByteArrays ::
-     Fd -- ^ Socket
-  -> UnliftedArray ByteArray -- ^ Byte arrays
-  -> Int -- ^ Offset into byte array chunks
-  -> Int -- ^ Number of chunks to send
-  -> Int -- ^ Offset into first chunk
-  -> MessageFlags 'Send
-  -> IO (Either Errno CSize)
-{-# inline uninterruptibleSendByteArrays #-}
-uninterruptibleSendByteArrays !fd (UnliftedArray arrs)
-  off !len !offC !flags =
-    c_unsafe_sendmsg_bytearrays fd arrs off len offC flags
       >>= errorsFromSize
 
 -- | Send data from a mutable byte array over a network socket. Users
@@ -1167,85 +1131,8 @@ uninterruptibleReceiveFrom_ !fd (Addr !b) !len !flags =
   c_unsafe_addr_peerless_recvfrom fd b len flags
     >>= errorsFromSize
 
--- | Receive a message, scattering the input. This does not provide
---   the socket address or the control messages. All of the chunks
---   must have the same maximum size. All resulting byte arrays have
---   been explicitly pinned.
-uninterruptibleReceiveMessageA ::
-     Fd -- ^ Socket
-  -> CSize -- ^ Maximum bytes per chunk
-  -> CSize -- ^ Maximum number of chunks
-  -> MessageFlags 'Receive -- ^ Flags
-  -> IO (Either Errno (CSize,UnliftedArray ByteArray))
-uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
-  bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
-  iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
-  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
-  initializeIOVectors bufs iovecsAddr chunkSize chunkCount
-  msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
-  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
-  pokeMessageHeader msgHdrAddr nullAddr 0 iovecsAddr chunkCount nullAddr 0 flags
-  r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
-  if r > (-1)
-    then do
-      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
-      frozenBufs <- deepFreezeIOVectors filled bufs
-      touchMutableUnliftedArray bufs
-      touchMutableByteArray iovecsBuf
-      touchMutableByteArray msgHdrBuf
-      pure (Right (cssizeToCSize r,frozenBufs))
-    else do
-      touchMutableUnliftedArray bufs
-      touchMutableByteArray iovecsBuf
-      touchMutableByteArray msgHdrBuf
-      fmap Left getErrno
-
 ptrToAddr :: Ptr Word8 -> Addr
 ptrToAddr (Exts.Ptr a) = Addr a
-
--- | Receive a message, scattering the input. This provides the socket
---   address but does not include control messages. All of the chunks
---   must have the same maximum size. All resulting byte arrays have
---   been explicitly pinned.
-uninterruptibleReceiveMessageB ::
-     Fd -- ^ Socket
-  -> CSize -- ^ Maximum bytes per chunk
-  -> CSize -- ^ Maximum number of chunks
-  -> MessageFlags 'Receive -- ^ Flags
-  -> CInt -- ^ Maximum socket address size
-  -> IO (Either Errno (CInt,SocketAddress,CSize,UnliftedArray ByteArray))
-uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz = do
-  sockAddrBuf <- PM.newPinnedByteArray (cintToInt maxSockAddrSz)
-  bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
-  iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
-  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
-  initializeIOVectors bufs iovecsAddr chunkSize chunkCount
-  msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
-  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
-  pokeMessageHeader msgHdrAddr
-    (ptrToAddr (PM.mutableByteArrayContents sockAddrBuf)) maxSockAddrSz iovecsAddr
-    chunkCount nullAddr 0 flags
-  r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
-  if r > (-1)
-    then do
-      actualSockAddrSz <- PST.peekMessageHeaderNameLength msgHdrAddr
-      if actualSockAddrSz < maxSockAddrSz
-        then shrinkMutableByteArray sockAddrBuf (cintToInt actualSockAddrSz)
-        else pure ()
-      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
-      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
-      frozenBufs <- deepFreezeIOVectors filled bufs
-      touchMutableUnliftedArray bufs
-      touchMutableByteArray iovecsBuf
-      touchMutableByteArray msgHdrBuf
-      touchMutableByteArray sockAddrBuf
-      pure (Right (actualSockAddrSz,SocketAddress sockAddr,cssizeToCSize r,frozenBufs))
-    else do
-      touchMutableUnliftedArray bufs
-      touchMutableByteArray iovecsBuf
-      touchMutableByteArray msgHdrBuf
-      touchMutableByteArray sockAddrBuf
-      fmap Left getErrno
 
 -- | Shutdown a socket. This uses the unsafe FFI.
 uninterruptibleShutdown ::
@@ -1330,6 +1217,144 @@ pokeMessageHeader msgHdrAddr a b c d e f g = do
   PST.pokeMessageHeaderControlLength msgHdrAddr f
   PST.pokeMessageHeaderFlags msgHdrAddr g
 
+#if defined(UNLIFTEDARRAYFUNCTIONS)
+-- | Write data from multiple byte arrays to the file/socket associated
+--   with the file descriptor. This does not support slicing. The
+--   <http://pubs.opengroup.org/onlinepubs/009604499/functions/writev.html POSIX specification>
+--   of @writev@ includes more details.
+writeVector ::
+     Fd -- ^ Socket
+  -> UnliftedArray ByteArray -- ^ Source byte arrays
+  -> IO (Either Errno CSize)
+writeVector fd buffers = do
+  iovecs@(MutableByteArray iovecs#) :: MutableByteArray RealWorld <-
+    PM.newPinnedByteArray
+      (cintToInt PST.sizeofIOVector * PM.sizeofUnliftedArray buffers)
+  -- We construct a list of the new buffers for the sole purpose
+  -- of ensuring that we can touch the list later to keep all
+  -- the new buffers live.
+  newBufs <- foldDownward (PM.sizeofUnliftedArray buffers) UNil $ \newBufs i -> do
+    let !buf = PM.indexUnliftedArray buffers i
+    pinByteArray buf >>= \case
+      Nothing -> do
+        let buffer = buf
+        let targetAddr :: Addr
+            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
+              (i * cintToInt PST.sizeofIOVector)
+        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
+        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
+        pure newBufs
+      Just buffer -> do
+        let targetAddr :: Addr
+            targetAddr = ptrToAddr (PM.mutableByteArrayContents iovecs) `plusAddr`
+              (i * cintToInt PST.sizeofIOVector)
+        PST.pokeIOVectorBase targetAddr (ptrToAddr (PM.byteArrayContents buffer))
+        PST.pokeIOVectorLength targetAddr (intToCSize (PM.sizeofByteArray buffer))
+        pure (UCons (unByteArray buffer) newBufs)
+  r <- errorsFromSize =<<
+    c_safe_writev fd iovecs# (intToCInt (PM.sizeofUnliftedArray buffers))
+  -- Touching both the unlifted array and the list of new buffers
+  -- here is crucial to ensuring that
+  -- the buffers do not get GCed before c_safe_writev. Just touching
+  -- them should keep all of their children alive too.
+  touchUnliftedArray buffers
+  touchLifted newBufs
+  pure r
+
+-- | Send many immutable byte arrays with @sendmsg@.
+-- This accepts a slice into the chunks. Additionally,
+-- this accepts an offset into the first chunk.
+uninterruptibleSendByteArrays ::
+     Fd -- ^ Socket
+  -> UnliftedArray ByteArray -- ^ Byte arrays
+  -> Int -- ^ Offset into byte array chunks
+  -> Int -- ^ Number of chunks to send
+  -> Int -- ^ Offset into first chunk
+  -> MessageFlags 'Send
+  -> IO (Either Errno CSize)
+{-# inline uninterruptibleSendByteArrays #-}
+uninterruptibleSendByteArrays !fd (UnliftedArray arrs)
+  off !len !offC !flags =
+    c_unsafe_sendmsg_bytearrays fd arrs off len offC flags
+      >>= errorsFromSize
+
+-- | Receive a message, scattering the input. This does not provide
+--   the socket address or the control messages. All of the chunks
+--   must have the same maximum size. All resulting byte arrays have
+--   been explicitly pinned.
+uninterruptibleReceiveMessageA ::
+     Fd -- ^ Socket
+  -> CSize -- ^ Maximum bytes per chunk
+  -> CSize -- ^ Maximum number of chunks
+  -> MessageFlags 'Receive -- ^ Flags
+  -> IO (Either Errno (CSize,UnliftedArray ByteArray))
+uninterruptibleReceiveMessageA !s !chunkSize !chunkCount !flags = do
+  bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
+  iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
+  initializeIOVectors bufs iovecsAddr chunkSize chunkCount
+  msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
+  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
+  pokeMessageHeader msgHdrAddr nullAddr 0 iovecsAddr chunkCount nullAddr 0 flags
+  r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
+  if r > (-1)
+    then do
+      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
+      frozenBufs <- deepFreezeIOVectors filled bufs
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      pure (Right (cssizeToCSize r,frozenBufs))
+    else do
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      fmap Left getErrno
+
+-- | Receive a message, scattering the input. This provides the socket
+--   address but does not include control messages. All of the chunks
+--   must have the same maximum size. All resulting byte arrays have
+--   been explicitly pinned.
+uninterruptibleReceiveMessageB ::
+     Fd -- ^ Socket
+  -> CSize -- ^ Maximum bytes per chunk
+  -> CSize -- ^ Maximum number of chunks
+  -> MessageFlags 'Receive -- ^ Flags
+  -> CInt -- ^ Maximum socket address size
+  -> IO (Either Errno (CInt,SocketAddress,CSize,UnliftedArray ByteArray))
+uninterruptibleReceiveMessageB !s !chunkSize !chunkCount !flags !maxSockAddrSz = do
+  sockAddrBuf <- PM.newPinnedByteArray (cintToInt maxSockAddrSz)
+  bufs <- PM.unsafeNewUnliftedArray (csizeToInt chunkCount)
+  iovecsBuf <- PM.newPinnedByteArray (csizeToInt chunkCount * cintToInt PST.sizeofIOVector)
+  let iovecsAddr = ptrToAddr (PM.mutableByteArrayContents iovecsBuf)
+  initializeIOVectors bufs iovecsAddr chunkSize chunkCount
+  msgHdrBuf <- PM.newPinnedByteArray (cintToInt PST.sizeofMessageHeader)
+  let !msgHdrAddr@(Addr msgHdrAddr#) = ptrToAddr (PM.mutableByteArrayContents msgHdrBuf)
+  pokeMessageHeader msgHdrAddr
+    (ptrToAddr (PM.mutableByteArrayContents sockAddrBuf)) maxSockAddrSz iovecsAddr
+    chunkCount nullAddr 0 flags
+  r <- c_unsafe_addr_recvmsg s msgHdrAddr# flags
+  if r > (-1)
+    then do
+      actualSockAddrSz <- PST.peekMessageHeaderNameLength msgHdrAddr
+      if actualSockAddrSz < maxSockAddrSz
+        then shrinkMutableByteArray sockAddrBuf (cintToInt actualSockAddrSz)
+        else pure ()
+      sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
+      filled <- countAndShrinkIOVectors (csizeToInt chunkCount) (cssizeToInt r) (csizeToInt chunkSize) bufs
+      frozenBufs <- deepFreezeIOVectors filled bufs
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      touchMutableByteArray sockAddrBuf
+      pure (Right (actualSockAddrSz,SocketAddress sockAddr,cssizeToCSize r,frozenBufs))
+    else do
+      touchMutableUnliftedArray bufs
+      touchMutableByteArray iovecsBuf
+      touchMutableByteArray msgHdrBuf
+      touchMutableByteArray sockAddrBuf
+      fmap Left getErrno
+
 -- This sets up an array of iovec. The iov_len is assigned to the
 -- same length in all of these. The actual buffers are allocated
 -- and stuck in an unlifted array. Pointers to these buffers (we can
@@ -1407,23 +1432,24 @@ deepFreezeIOVectors n m = do
         else PM.unsafeFreezeUnliftedArray x
   go 0
 
-unByteArray :: ByteArray -> ByteArray#
-unByteArray (ByteArray x) = x
-
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
 touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
 
 touchUnliftedArray :: UnliftedArray a -> IO ()
 touchUnliftedArray (UnliftedArray x) = touchUnliftedArray# x
 
-touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
-touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
-
 touchMutableUnliftedArray# :: MutableUnliftedArray# RealWorld a -> IO ()
 touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 touchUnliftedArray# :: UnliftedArray# a -> IO ()
 touchUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+#endif
+
+unByteArray :: ByteArray -> ByteArray#
+unByteArray (ByteArray x) = x
+
+touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
+touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
 touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)

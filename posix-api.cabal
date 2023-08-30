@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: posix-api
-version: 0.6.1.0
+version: 0.7.0.0
 synopsis: posix bindings
 description:
   This library provides a very thin wrapper around POSIX APIs. It can be
@@ -76,6 +76,13 @@ flag assertions
   description: Extra run-time invariant checking 
   default: False
 
+-- This only exists to help get this library to build on hackage.
+-- Whenever hackage moves to GHC 9.4, remove this.
+flag unliftedarrayfunctions
+  manual: True
+  description: Build and export functions using unlifted arrays
+  default: False
+
 library
   exposed-modules:
     Foreign.C.String.Managed
@@ -108,9 +115,10 @@ library
     , primitive >= 0.7 && <0.10
     , primitive-addr >= 0.1 && <0.2
     , primitive-offset >= 0.2 && <0.3
-    , primitive-unlifted >= 2.0 && <2.2
     , run-st >= 0.1.1 && <0.2
     , text-short >=0.1.5
+  if flag(unliftedarrayfunctions)
+    build-depends: primitive-unlifted >=2.1 && <2.2
   hs-source-dirs: src
   if flag(assertions)
     hs-source-dirs: src-assertions

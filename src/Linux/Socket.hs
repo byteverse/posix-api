@@ -1,4 +1,5 @@
 {-# language BangPatterns #-}
+{-# language CPP #-}
 {-# language DataKinds #-}
 {-# language MagicHash #-}
 {-# language ScopedTypeVariables #-}
@@ -7,12 +8,14 @@
 
 module Linux.Socket
   ( -- * Functions
-    uninterruptibleReceiveMultipleMessageA
+    uninterruptibleAccept4
+  , uninterruptibleAccept4_
+#if defined(UNLIFTEDARRAYFUNCTIONS)
+  , uninterruptibleReceiveMultipleMessageA
   , uninterruptibleReceiveMultipleMessageB
   , uninterruptibleReceiveMultipleMessageC
   , uninterruptibleReceiveMultipleMessageD
-  , uninterruptibleAccept4
-  , uninterruptibleAccept4_
+#endif
     -- * Types
   , SocketFlags(..)
     -- * Option Names
@@ -52,9 +55,11 @@ import Control.Monad (when)
 import Data.Bits ((.|.))
 import Data.Primitive (MutableByteArray(..),ByteArray(..),MutablePrimArray(..))
 import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
 import Data.Primitive.Unlifted.Array.Primops (MutableUnliftedArray#(MutableUnliftedArray#))
+#endif
 import Data.Void (Void)
 import Data.Word (Word8)
 import Foreign.C.Error (Errno,getErrno)
@@ -69,7 +74,9 @@ import System.Posix.Types (Fd(..),CSsize(..))
 
 import qualified Control.Monad.Primitive as PM
 import qualified Data.Primitive as PM
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 import qualified Data.Primitive.Unlifted.Array as PM
+#endif
 import qualified Linux.Socket.Types as LST
 import qualified Posix.Socket as S
 
@@ -99,6 +106,7 @@ foreign import ccall unsafe "sys/socket.h accept4"
      -> SocketFlags
      -> IO Fd
 
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
   c_unsafe_recvmmsg_sockaddr_in ::
        Fd
@@ -117,6 +125,7 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_discard"
     -> CUInt -- Length of msghdr array
     -> MessageFlags 'Receive
     -> IO CInt
+#endif
 
 -- | Linux extends the @type@ argument of
 --   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
@@ -135,6 +144,7 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_discard"
 applySocketFlags :: SocketFlags -> Type -> Type
 applySocketFlags (SocketFlags s) (Type t) = Type (s .|. t)
 
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 -- | Receive multiple messages. This does not provide the socket
 --   addresses or the control messages. It does not use any of the
 --   input-scattering that @recvmmsg@ offers, meaning that a single
@@ -343,6 +353,7 @@ shrinkAndFreezeMessages !bufSize !expSockAddrSize !n !bufs !mmsghdr0 = do
     else do
       a <- PM.unsafeFreezeUnliftedArray r
       pure (validation,maxMsgSz,a)
+#endif
 
 pokeMultipleMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> CUInt -> IO ()
 pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do
@@ -419,8 +430,10 @@ touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
 touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
+#if defined(UNLIFTEDARRAYFUNCTIONS)
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()
 touchMutableUnliftedArray (MutableUnliftedArray x) = touchMutableUnliftedArray# x
 
 touchMutableUnliftedArray# :: MutableUnliftedArray# RealWorld a -> IO ()
 touchMutableUnliftedArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+#endif
