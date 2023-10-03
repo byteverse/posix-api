@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: posix-api
-version: 0.7.0.0
+version: 0.7.1.0
 synopsis: posix bindings
 description:
   This library provides a very thin wrapper around POSIX APIs. It can be
@@ -98,6 +98,7 @@ library
     Posix.Types
     Posix.Struct.SocketAddressInternet.Peek
     Posix.Struct.AddressInfo.Peek
+    Posix.Struct.AddressInfo.Poke
   other-modules:
     Linux.Epoll.Types
     Linux.MessageQueue.Types

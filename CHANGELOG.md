@@ -7,6 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [0.7.1.0] - 2023-??-??
+
+- Add `uninterruptibleOpenModeUntypedFlags`.
+- Add `Posix.Struct.AddressInfo.Poke`.
+
 ## [0.7.0.0] - 2023-08-30
 
 - For now, remove all of the functions that work on UnliftedArray. These
