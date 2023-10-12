@@ -11,6 +11,7 @@ This project adheres to the [Haskell Package Versioning Policy](https://pvp.hask
 
 - Add `uninterruptibleOpenModeUntypedFlags`.
 - Add `Posix.Struct.AddressInfo.Poke`.
+- Add `Posix.File.uninterruptibleReadMutableByteArray`.
 
 ## [0.7.0.0] - 2023-08-30
 

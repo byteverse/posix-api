@@ -21,7 +21,7 @@
 #define MAX_BYTEARRAYS 64
 
 // Generally, this library tries to avoid wrapping POSIX functions
-// in an additional function. However, for some functions whose wrappers
+// in an additional function. However, for some functions whose
 // unsafe FFI wrappers use unpinned ByteArray instead of Addr, the only
 // way to support providing an offset (without just copying the bytes
 // into pinned memory) is to use a wrapper.
@@ -48,6 +48,9 @@ ssize_t write_offset(int fd, const char *message, HsInt offset, size_t length){
 }
 ssize_t recv_offset(int socket, char *buffer, HsInt offset, size_t length, int flags) {
   return recv(socket, (void*)(buffer + offset), length, flags);
+}
+ssize_t read_offset(int fd, char *buffer, HsInt offset, size_t length) {
+  return read(fd, (void*)(buffer + offset), length);
 }
 ssize_t send_offset(int socket, const char *buffer, HsInt offset, size_t length, int flags) {
   return send(socket, (const void*)(buffer + offset), length, flags);

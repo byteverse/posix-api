@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "Rts.h"
 
+ssize_t read_offset(int socket, char *buffer, HsInt offset, size_t length);
 ssize_t recv_offset(int socket, char *buffer, HsInt offset, size_t length, int flags);
 ssize_t send_offset(int socket, const char *buffer, HsInt offset, size_t length, int flags);
 

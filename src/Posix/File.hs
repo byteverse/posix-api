@@ -13,6 +13,7 @@ module Posix.File
   , uninterruptibleWriteBytes
   , uninterruptibleWriteBytesCompletely
   , uninterruptibleWriteBytesCompletelyErrno
+  , uninterruptibleReadMutableByteArray
   , writeBytesCompletelyErrno
   , uninterruptibleOpen
   , uninterruptibleOpenMode
@@ -236,6 +237,15 @@ writeMutableByteArray !fd !buf0 !off !len =
   let !(MutableByteArray buf1) = assertMutableByteArrayPinned buf0
    in c_safe_mutablebytearray_write fd buf1 off len >>= errorsFromSize
 
+uninterruptibleReadMutableByteArray ::
+     Fd -- ^ File descriptor
+  -> MutableByteArray RealWorld -- ^ Destination
+  -> Int -- ^ Destination offset
+  -> CSize -- ^ Length in bytes
+  -> IO (Either Errno CSize) -- ^ Number of bytes received
+uninterruptibleReadMutableByteArray !fd !(MutableByteArray !b) !doff !dlen = do
+  c_unsafe_mutable_byte_array_read fd b doff dlen >>= errorsFromSize
+
 errorsFromSize :: CSsize -> IO (Either Errno CSize)
 errorsFromSize r = if r > (-1)
   then pure (Right (cssizeToCSize r))
@@ -313,3 +323,5 @@ errorsFromInt_ r = if r == 0
   then pure (Right ())
   else fmap Left getErrno
 
+foreign import ccall unsafe "HaskellPosix.h read_offset"
+  c_unsafe_mutable_byte_array_read :: Fd -> MutableByteArray# RealWorld -> Int -> CSize -> IO CSsize
