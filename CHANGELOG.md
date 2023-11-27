@@ -7,7 +7,12 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## [0.7.1.0] - 2023-??-??
+## [0.7.2.0] - 2023-??-??
+
+- Add `socket` as alias for `uninterruptibleSocket`.
+- Add `withSocket`.
+
+## [0.7.1.0] - 2023-10-03
 
 - Add `uninterruptibleOpenModeUntypedFlags`.
 - Add `Posix.Struct.AddressInfo.Poke`.

@@ -32,6 +32,8 @@ module Posix.Socket
   ( -- * Functions
     -- ** Socket
     uninterruptibleSocket
+  , socket
+  , withSocket
     -- ** Socket Pair
   , uninterruptibleSocketPair
     -- ** Address Resolution
@@ -220,6 +222,7 @@ import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray
 import Data.Primitive.Unlifted.Array.Primops (UnliftedArray#(UnliftedArray#),MutableUnliftedArray#)
 #endif
 
+import Control.Exception (onException,mask)
 import Data.Primitive.ByteArray.Offset (MutableByteArrayOffset(..))
 import Data.Primitive.PrimArray.Offset (MutablePrimArrayOffset(..))
 import Data.Word (Word8,Word16,Word32,byteSwap16,byteSwap32)
@@ -470,6 +473,41 @@ uninterruptibleSocket ::
   -> Protocol -- ^ Protocol
   -> IO (Either Errno Fd)
 uninterruptibleSocket dom typ prot = c_socket dom typ prot >>= errorsFromFd
+
+-- | Alias for 'uninterruptibleSocket'.
+socket ::
+     Family -- ^ Communications domain (e.g. 'internet', 'unix')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
+  -> Protocol -- ^ Protocol
+  -> IO (Either Errno Fd)
+socket = uninterruptibleSocket
+
+-- | Helper function for the common case where 'socket' or
+-- 'uninterruptibleSocket' is paired with 'close'. This ensures that the
+-- socket is closed even in the case of an exception. Do not call 'close' in
+-- the callback since 'close' is called by this function after the callback
+-- completes (or after an exception is thrown).
+--
+-- This is implementated with @mask@ (and restore) and @onException@
+-- directly rather than with @bracket@.
+withSocket ::
+     Family -- ^ Communications domain (e.g. 'internet', 'unix')
+  -> Type -- ^ Socket type (e.g. 'datagram', 'stream') with flags
+  -> Protocol -- ^ Protocol
+  -> (Fd -> IO a)
+     -- ^ Callback that uses the socket. Must not close the socket.
+     -- The callback is not used when the @socket()@ call fails.
+  -> IO (Either Errno a)
+{-# inline withSocket #-}
+withSocket !dom !typ !prot cb =
+  mask $ \restore -> do
+    r <- c_socket dom typ prot
+    if r > (-1)
+      then do
+        a <- restore (cb r) `onException` F.close r
+        F.close r
+        pure (Right a)
+      else fmap Left getErrno
 
 -- | Create an unbound pair of connected sockets in a specified domain, of
 --   a specified type, under the protocol optionally specified by the protocol
