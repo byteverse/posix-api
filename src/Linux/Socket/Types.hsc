@@ -75,7 +75,7 @@ newtype SocketFlags = SocketFlags CInt
 
 -- newtype Collection :: Type -> Type where
 --   Collection :: !(Ptr a) -> Collection a
--- 
+--
 -- indexCollection :: Ptr a
 --   => Collection a -> Int -> IO (Ptr a)
 -- indexCollection (Collection p) n = advancePtr p n
@@ -88,12 +88,12 @@ newtype SocketFlags = SocketFlags CInt
 --   , controlLength :: !CSize
 --   , flags :: !(MessageFlags Receive)
 --   }
--- 
+--
 -- data IOVector = IOVector
 --   { base :: !Addr
 --   , length :: !CSize
 --   }
--- 
+--
 -- data ControlMessageHeader = ControlMessageHeader
 --   { length :: !CInt
 --   , level :: !CInt

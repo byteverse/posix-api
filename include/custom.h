@@ -72,4 +72,3 @@
   } else { \
     hsc_printf ("BAD_BYTEARRAY_ALIGNMENT"); \
   }
-

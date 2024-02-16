@@ -20,4 +20,3 @@ int recvmmsg_sockaddr_in (int sockfd , int *lens , struct sockaddr_in *addrs
 int recvmmsg_sockaddr_discard (int sockfd , int *lens
   , StgArrBytes **bufs // used for output
   , unsigned int vlen , int flags);
-

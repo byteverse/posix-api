@@ -7,10 +7,6 @@ module Posix.Types
   ( CNfds(..)
   ) where
 
-import Data.Word
-
-import Foreign.Storable (Storable)
-import Data.Bits (FiniteBits,Bits)
 #if MIN_VERSION_base(4,14,0)
 import System.Posix.Types (CNfds(..))
 #endif

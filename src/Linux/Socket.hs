@@ -1,11 +1,11 @@
-{-# language BangPatterns #-}
-{-# language CPP #-}
-{-# language DataKinds #-}
-{-# language MagicHash #-}
-{-# language ScopedTypeVariables #-}
-{-# language UnboxedTuples #-}
-{-# language UnliftedFFITypes #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UnliftedFFITypes #-}
 
+{- FOURMOLU_DISABLE -}
 module Linux.Socket
   ( -- * Functions
     uninterruptibleAccept4
@@ -48,29 +48,25 @@ module Linux.Socket
   , LST.pokeIpHeaderSourceAddress
   , LST.pokeIpHeaderDestinationAddress
   ) where
+{- FOURMOLU_ENABLE -}
 
 import Prelude hiding (truncate)
 
-import Control.Monad (when)
 import Data.Bits ((.|.))
-import Data.Primitive (MutableByteArray(..),ByteArray(..),MutablePrimArray(..))
-import Data.Primitive.Addr (Addr(..),plusAddr,nullAddr)
+import Data.Primitive (MutableByteArray (..))
 #if defined(UNLIFTEDARRAYFUNCTIONS)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray,UnliftedArray)
 import Data.Primitive.Unlifted.Array (MutableUnliftedArray_(MutableUnliftedArray))
 import Data.Primitive.Unlifted.Array.Primops (MutableUnliftedArray#(MutableUnliftedArray#))
 #endif
 import Data.Void (Void)
-import Data.Word (Word8)
-import Foreign.C.Error (Errno,getErrno)
-import Foreign.C.Types (CInt(..),CSize(..),CUInt(..))
+import Foreign.C.Error (Errno, getErrno)
+import Foreign.C.Types (CInt (..))
 import Foreign.Ptr (nullPtr)
-import GHC.Exts (Ptr(..),RealWorld,MutableArray#,MutableByteArray#,Addr#,Int(I#))
-import GHC.Exts (shrinkMutableByteArray#,touch#,nullAddr#)
-import GHC.IO (IO(..))
-import Linux.Socket.Types (SocketFlags(..))
-import Posix.Socket (Type(..),MessageFlags(..),Message(Receive),SocketAddress(..))
-import System.Posix.Types (Fd(..),CSsize(..))
+import GHC.Exts (Int (I#), MutableByteArray#, Ptr (..), RealWorld, shrinkMutableByteArray#)
+import Linux.Socket.Types (SocketFlags (..))
+import Posix.Socket (SocketAddress (..), Type (..))
+import System.Posix.Types (Fd (..))
 
 import qualified Control.Monad.Primitive as PM
 import qualified Data.Primitive as PM
@@ -78,33 +74,34 @@ import qualified Data.Primitive as PM
 import qualified Data.Primitive.Unlifted.Array as PM
 #endif
 import qualified Linux.Socket.Types as LST
-import qualified Posix.Socket as S
 
-foreign import ccall unsafe "sys/socket.h recvmmsg"
-  c_unsafe_addr_recvmmsg :: Fd
-                         -> Addr# -- This addr is an array of msghdr
-                         -> CUInt -- Length of msghdr array
-                         -> MessageFlags 'Receive
-                         -> Addr# -- Timeout
-                         -> IO CSsize
+-- 2024-02-05: Commented out unused function.
+-- foreign import ccall unsafe "sys/socket.h recvmmsg"
+--   c_unsafe_addr_recvmmsg :: Fd
+--                          -> Addr# -- This addr is an array of msghdr
+--                          -> CUInt -- Length of msghdr array
+--                          -> MessageFlags 'Receive
+--                          -> Addr# -- Timeout
+--                          -> IO CSsize
 
 foreign import ccall unsafe "sys/socket.h accept4"
-  c_unsafe_accept4 :: Fd
-                   -> MutableByteArray# RealWorld -- SocketAddress
-                   -> MutableByteArray# RealWorld -- Ptr CInt
-                   -> SocketFlags
-                   -> IO Fd
+  c_unsafe_accept4 ::
+    Fd ->
+    MutableByteArray# RealWorld -> -- SocketAddress
+    MutableByteArray# RealWorld -> -- Ptr CInt
+    SocketFlags ->
+    IO Fd
 
 -- Variant of c_unsafe_ptr_accept4 that uses Ptr instead of MutableByteArray.
 -- Currently, we expect that the two pointers are set to NULL.
 -- This is only used internally.
 foreign import ccall unsafe "sys/socket.h accept4"
   c_unsafe_ptr_accept4 ::
-        Fd
-     -> Ptr Void -- SocketAddress
-     -> Ptr Void -- Ptr CInt
-     -> SocketFlags
-     -> IO Fd
+    Fd ->
+    Ptr Void -> -- SocketAddress
+    Ptr Void -> -- Ptr CInt
+    SocketFlags ->
+    IO Fd
 
 #if defined(UNLIFTEDARRAYFUNCTIONS)
 foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_in"
@@ -127,20 +124,20 @@ foreign import ccall unsafe "HaskellPosix.h recvmmsg_sockaddr_discard"
     -> IO CInt
 #endif
 
--- | Linux extends the @type@ argument of
---   <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
---   setting two socket flags on socket creation: @SOCK_CLOEXEC@ and
---   @SOCK_NONBLOCK@. It is advisable to set @SOCK_CLOEXEC@ on when
---   opening a socket on linux. For example, we may open a TCP Internet
---   socket with:
---
---   > uninterruptibleSocket internet (applySocketFlags closeOnExec stream) defaultProtocol
---
---   To additionally open the socket in nonblocking mode
---   (e.g. with @SOCK_NONBLOCK@):
---
---   > uninterruptibleSocket internet (applySocketFlags (closeOnExec <> nonblocking) stream) defaultProtocol
---   
+{- | Linux extends the @type@ argument of
+  <http://man7.org/linux/man-pages/man2/socket.2.html socket> to allow
+  setting two socket flags on socket creation: @SOCK_CLOEXEC@ and
+  @SOCK_NONBLOCK@. It is advisable to set @SOCK_CLOEXEC@ on when
+  opening a socket on linux. For example, we may open a TCP Internet
+  socket with:
+
+  > uninterruptibleSocket internet (applySocketFlags closeOnExec stream) defaultProtocol
+
+  To additionally open the socket in nonblocking mode
+  (e.g. with @SOCK_NONBLOCK@):
+
+  > uninterruptibleSocket internet (applySocketFlags (closeOnExec <> nonblocking) stream) defaultProtocol
+-}
 applySocketFlags :: SocketFlags -> Type -> Type
 applySocketFlags (SocketFlags s) (Type t) = Type (s .|. t)
 
@@ -208,7 +205,7 @@ uninterruptibleReceiveMultipleMessageA !s !msgSize !msgCount !flags = do
 -- * The message data of each message.
 --
 -- The @sockaddr@s bytearray and the unlifted array of messages are
--- guaranteed to have the same number of elements. 
+-- guaranteed to have the same number of elements.
 uninterruptibleReceiveMultipleMessageB ::
      Fd -- ^ Socket
   -> CInt -- ^ Expected @sockaddr@ size
@@ -355,29 +352,35 @@ shrinkAndFreezeMessages !bufSize !expSockAddrSize !n !bufs !mmsghdr0 = do
       pure (validation,maxMsgSz,a)
 #endif
 
-pokeMultipleMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> CUInt -> IO ()
-pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do
-  LST.pokeMultipleMessageHeaderName mmsgHdrAddr a
-  LST.pokeMultipleMessageHeaderNameLength mmsgHdrAddr b
-  LST.pokeMultipleMessageHeaderIOVector mmsgHdrAddr c
-  LST.pokeMultipleMessageHeaderIOVectorLength mmsgHdrAddr d
-  LST.pokeMultipleMessageHeaderControl mmsgHdrAddr e
-  LST.pokeMultipleMessageHeaderControlLength mmsgHdrAddr f
-  LST.pokeMultipleMessageHeaderFlags mmsgHdrAddr g
-  LST.pokeMultipleMessageHeaderLength mmsgHdrAddr len
+-- 2024-02-05: Commented out unused function.
+-- pokeMultipleMessageHeader :: Addr -> Addr -> CInt -> Addr -> CSize -> Addr -> CSize -> MessageFlags 'Receive -> CUInt -> IO ()
+-- pokeMultipleMessageHeader mmsgHdrAddr a b c d e f g len = do
+--   LST.pokeMultipleMessageHeaderName mmsgHdrAddr a
+--   LST.pokeMultipleMessageHeaderNameLength mmsgHdrAddr b
+--   LST.pokeMultipleMessageHeaderIOVector mmsgHdrAddr c
+--   LST.pokeMultipleMessageHeaderIOVectorLength mmsgHdrAddr d
+--   LST.pokeMultipleMessageHeaderControl mmsgHdrAddr e
+--   LST.pokeMultipleMessageHeaderControlLength mmsgHdrAddr f
+--   LST.pokeMultipleMessageHeaderFlags mmsgHdrAddr g
+--   LST.pokeMultipleMessageHeaderLength mmsgHdrAddr len
 
 shrinkMutableByteArray :: MutableByteArray RealWorld -> Int -> IO ()
 shrinkMutableByteArray (MutableByteArray arr) (I# sz) =
   PM.primitive_ (shrinkMutableByteArray# arr sz)
 
--- | Variant of 'Posix.Socket.uninterruptibleAccept' that allows setting
---   flags on the newly-accepted connection.
+{- | Variant of 'Posix.Socket.uninterruptibleAccept' that allows setting
+  flags on the newly-accepted connection.
+-}
 uninterruptibleAccept4 ::
-     Fd -- ^ Listening socket
-  -> CInt -- ^ Maximum socket address size
-  -> SocketFlags -- ^ Set non-blocking and close-on-exec without extra syscall
-  -> IO (Either Errno (CInt,SocketAddress,Fd)) -- ^ Peer information and connected socket
-{-# inline uninterruptibleAccept4 #-}
+  -- | Listening socket
+  Fd ->
+  -- | Maximum socket address size
+  CInt ->
+  -- | Set non-blocking and close-on-exec without extra syscall
+  SocketFlags ->
+  -- | Peer information and connected socket
+  IO (Either Errno (CInt, SocketAddress, Fd))
+{-# INLINE uninterruptibleAccept4 #-}
 uninterruptibleAccept4 !sock !maxSz !flags = do
   sockAddrBuf@(MutableByteArray sockAddrBuf#) <- PM.newByteArray (cintToInt maxSz)
   lenBuf@(MutableByteArray lenBuf#) <- PM.newByteArray (PM.sizeOf (undefined :: CInt))
@@ -390,16 +393,20 @@ uninterruptibleAccept4 !sock !maxSz !flags = do
         then shrinkMutableByteArray sockAddrBuf (cintToInt sz)
         else pure ()
       sockAddr <- PM.unsafeFreezeByteArray sockAddrBuf
-      pure (Right (sz,SocketAddress sockAddr,r))
+      pure (Right (sz, SocketAddress sockAddr, r))
     else fmap Left getErrno
 
--- | Variant of 'uninterruptibleAccept4' that requests that the kernel not
--- include the socket address in its reponse.
+{- | Variant of 'uninterruptibleAccept4' that requests that the kernel not
+include the socket address in its reponse.
+-}
 uninterruptibleAccept4_ ::
-     Fd -- ^ Listening socket
-  -> SocketFlags -- ^ Set non-blocking and close-on-exec without extra syscall
-  -> IO (Either Errno Fd) -- ^ Connected socket
-{-# inline uninterruptibleAccept4_ #-}
+  -- | Listening socket
+  Fd ->
+  -- | Set non-blocking and close-on-exec without extra syscall
+  SocketFlags ->
+  -- | Connected socket
+  IO (Either Errno Fd)
+{-# INLINE uninterruptibleAccept4_ #-}
 uninterruptibleAccept4_ !sock !flags = do
   r <- c_unsafe_ptr_accept4 sock nullPtr nullPtr flags
   if r > (-1)
@@ -409,26 +416,27 @@ uninterruptibleAccept4_ !sock !flags = do
 cintToInt :: CInt -> Int
 cintToInt = fromIntegral
 
-cuintToInt :: CUInt -> Int
-cuintToInt = fromIntegral
+-- 2024-02-05: Commented out unused functions.
+-- cuintToInt :: CUInt -> Int
+-- cuintToInt = fromIntegral
 
-csizeToInt :: CSize -> Int
-csizeToInt = fromIntegral
+-- csizeToInt :: CSize -> Int
+-- csizeToInt = fromIntegral
 
-cssizeToInt :: CSsize -> Int
-cssizeToInt = fromIntegral
+-- cssizeToInt :: CSsize -> Int
+-- cssizeToInt = fromIntegral
 
-errorsFromInt :: CInt -> IO (Either Errno CInt)
-{-# inline errorsFromInt #-}
-errorsFromInt r = if r > (-1)
-  then pure (Right r)
-  else fmap Left getErrno
+-- errorsFromInt :: CInt -> IO (Either Errno CInt)
+-- {-# inline errorsFromInt #-}
+-- errorsFromInt r = if r > (-1)
+--   then pure (Right r)
+--   else fmap Left getErrno
 
-touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
-touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
+-- touchMutableByteArray :: MutableByteArray RealWorld -> IO ()
+-- touchMutableByteArray (MutableByteArray x) = touchMutableByteArray# x
 
-touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
-touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
+-- touchMutableByteArray# :: MutableByteArray# RealWorld -> IO ()
+-- touchMutableByteArray# x = IO $ \s -> case touch# x s of s' -> (# s', () #)
 
 #if defined(UNLIFTEDARRAYFUNCTIONS)
 touchMutableUnliftedArray :: MutableUnliftedArray RealWorld a -> IO ()

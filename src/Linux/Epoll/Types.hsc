@@ -350,7 +350,7 @@ unI (I## i) = i
 --   (a :: Word32) <- PM.readByteArray arr (ix * 3 + 1)
 --   (b :: Word32) <- PM.readByteArray arr (ix * 3 + 2)
 --   pure (unsafeShiftL (word32ToWord64 a) 32 .|. word32ToWord64 b)
--- 
+--
 -- -- | Write @data.u64@ from @struct epoll_event@.
 -- writeEventDataU64 ::
 --      MutableByteArray RealWorld

@@ -1,18 +1,15 @@
-{-# language BangPatterns #-}
-{-# language MagicHash #-}
-{-# language LambdaCase #-}
-{-# language UnboxedTuples #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Posix.Directory
   ( getCurrentWorkingDirectory
   ) where
 
 import Data.Primitive (ByteArray)
-import GHC.Exts (Ptr(..))
+import Foreign.C.Error (Errno, eRANGE, getErrno)
+import Foreign.C.Types (CChar, CSize (..))
 import Foreign.Ptr (nullPtr)
-import Foreign.C.Error (Errno,eRANGE,getErrno)
-import Foreign.C.Types (CChar,CSize(..))
-import GHC.IO (IO(..))
+import GHC.Exts (Ptr (..))
 
 import qualified Data.Primitive as PM
 import qualified Foreign.Storable as FS
@@ -20,11 +17,13 @@ import qualified Foreign.Storable as FS
 foreign import ccall safe "getcwd"
   c_getcwd :: Ptr CChar -> CSize -> IO (Ptr CChar)
 
--- | Get the current working directory without using the system locale
---   to convert it to text. This is implemented with a safe FFI call
---   since it may block.
+{- | Get the current working directory without using the system locale
+  to convert it to text. This is implemented with a safe FFI call
+  since it may block.
+-}
 getCurrentWorkingDirectory :: IO (Either Errno ByteArray)
-getCurrentWorkingDirectory = go (4096 - chunkOverhead) where
+getCurrentWorkingDirectory = go (4096 - chunkOverhead)
+ where
   go !sz = do
     -- It may be nice to add a variant of getCurrentWorkingDirectory that
     -- allow the user to supply an initial pinned buffer. I'm not sure
@@ -59,10 +58,10 @@ intToCSize = fromIntegral
 -- There must be a null byte present or bad things will happen.
 -- This will return a nonnegative number.
 findNullByte :: Ptr CChar -> IO Int
-findNullByte = go 0 where
+findNullByte = go 0
+ where
   go :: Int -> Ptr CChar -> IO Int
   go !ix !ptr = do
     FS.peekElemOff ptr ix >>= \case
       0 -> pure ix
       _ -> go (ix + 1) ptr
-

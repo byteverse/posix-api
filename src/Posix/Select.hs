@@ -1,5 +1,3 @@
 module Posix.Select
   (
   ) where
-
-

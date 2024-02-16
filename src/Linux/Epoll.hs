@@ -1,30 +1,34 @@
-{-# language BangPatterns #-}
-{-# language DataKinds #-}
-{-# language GADTSyntax #-}
-{-# language KindSignatures #-}
-{-# language MagicHash #-}
-{-# language UnliftedFFITypes #-}
-{-# language NamedFieldPuns #-}
-{-# language UnboxedTuples #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTSyntax #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnliftedFFITypes #-}
 
 module Linux.Epoll
   ( -- * Functions
+
     -- ** Create
     uninterruptibleCreate
   , uninterruptibleCreate1
+
     -- ** Wait
   , waitMutablePrimArray
   , uninterruptibleWaitMutablePrimArray
+
     -- ** Control
   , uninterruptibleControlMutablePrimArray
+
     -- * Types
-  , EpollFlags(..)
-  , ControlOperation(..)
-  , Events(..)
-  , Event(..)
-  , Exchange(..)
+  , EpollFlags (..)
+  , ControlOperation (..)
+  , Events (..)
+  , Event (..)
+  , Exchange (..)
+
     -- * Classes
   , PrimEpollData
+
     -- * Constants
   , T.closeOnExec
   , T.add
@@ -37,9 +41,11 @@ module Linux.Epoll
   , T.readHangup
   , T.error
   , T.edgeTriggered
+
     -- * Events Combinators
   , T.containsAnyEvents
   , T.containsAllEvents
+
     -- * Marshalling
   , T.sizeofEvent
   , T.peekEventEvents
@@ -56,13 +62,12 @@ module Linux.Epoll
 import Prelude hiding (error)
 
 import Assertion (assertMutablePrimArrayPinned)
-import Data.Primitive (MutablePrimArray(..))
-import Foreign.C.Error (Errno,getErrno)
-import Foreign.C.Types (CInt(..))
-import GHC.Exts (RealWorld,MutableByteArray#)
-import Linux.Epoll.Types (EpollFlags(..),ControlOperation(..),Events(..),Exchange(..))
-import Linux.Epoll.Types (Event(..),PrimEpollData(..))
-import System.Posix.Types (Fd(..))
+import Data.Primitive (MutablePrimArray (..))
+import Foreign.C.Error (Errno, getErrno)
+import Foreign.C.Types (CInt (..))
+import GHC.Exts (MutableByteArray#, RealWorld)
+import Linux.Epoll.Types (ControlOperation (..), EpollFlags (..), Event (..), Events (..), Exchange (..), PrimEpollData (..))
+import System.Posix.Types (Fd (..))
 
 import qualified Linux.Epoll.Types as T
 
@@ -93,81 +98,99 @@ foreign import ccall unsafe "sys/epoll.h epoll_ctl"
 --   PM.writeByteArray arr (ix * 3 + 2) (word64ToWord32 payload)
 
 uninterruptibleCreate ::
-     CInt -- ^ Size, ignored since Linux 2.6.8
-  -> IO (Either Errno Fd)
-{-# inline uninterruptibleCreate #-}
+  -- | Size, ignored since Linux 2.6.8
+  CInt ->
+  IO (Either Errno Fd)
+{-# INLINE uninterruptibleCreate #-}
 uninterruptibleCreate !sz = c_epoll_create sz >>= errorsFromFd
 
 uninterruptibleCreate1 ::
-     EpollFlags -- ^ Flags
-  -> IO (Either Errno Fd)
-{-# inline uninterruptibleCreate1 #-}
+  -- | Flags
+  EpollFlags ->
+  IO (Either Errno Fd)
+{-# INLINE uninterruptibleCreate1 #-}
 uninterruptibleCreate1 !flags =
   c_epoll_create1 flags >>= errorsFromFd
 
--- | Wait for an I/O event on an epoll file descriptor. The
---   <https://linux.die.net/man/2/epoll_wait Linux man page>
---   includes more details. The @timeout@ argument is omitted
---   since it is nonsense to choose anything other than 0 when
---   using the unsafe FFI.
+{- | Wait for an I/O event on an epoll file descriptor. The
+  <https://linux.die.net/man/2/epoll_wait Linux man page>
+  includes more details. The @timeout@ argument is omitted
+  since it is nonsense to choose anything other than 0 when
+  using the unsafe FFI.
+-}
 uninterruptibleWaitMutablePrimArray ::
-     Fd -- ^ EPoll file descriptor
-  -> MutablePrimArray RealWorld (Event 'Response a) -- ^ Event buffer
-  -> CInt -- ^ Maximum events
-  -> IO (Either Errno CInt) -- ^ Number of events received
-{-# inline uninterruptibleWaitMutablePrimArray #-}
+  -- | EPoll file descriptor
+  Fd ->
+  -- | Event buffer
+  MutablePrimArray RealWorld (Event 'Response a) ->
+  -- | Maximum events
+  CInt ->
+  -- | Number of events received
+  IO (Either Errno CInt)
+{-# INLINE uninterruptibleWaitMutablePrimArray #-}
 uninterruptibleWaitMutablePrimArray !epfd (MutablePrimArray evs) !maxEvents =
   c_epoll_wait_unsafe epfd evs maxEvents 0 >>= errorsFromInt
 
--- | Wait for an I/O event on an epoll file descriptor. The
---   <https://linux.die.net/man/2/epoll_wait Linux man page>
---   includes more details. The event buffer must be a pinned
---   byte array.
+{- | Wait for an I/O event on an epoll file descriptor. The
+  <https://linux.die.net/man/2/epoll_wait Linux man page>
+  includes more details. The event buffer must be a pinned
+  byte array.
+-}
 waitMutablePrimArray ::
-     Fd -- ^ EPoll file descriptor
-  -> MutablePrimArray RealWorld (Event 'Response a) -- ^ Event buffer, must be pinned
-  -> CInt -- ^ Maximum events
-  -> CInt -- ^ Timeout in milliseconds, use @-1@ to block forever.
-  -> IO (Either Errno CInt) -- ^ Number of events received
-{-# inline waitMutablePrimArray #-}
+  -- | EPoll file descriptor
+  Fd ->
+  -- | Event buffer, must be pinned
+  MutablePrimArray RealWorld (Event 'Response a) ->
+  -- | Maximum events
+  CInt ->
+  -- | Timeout in milliseconds, use @-1@ to block forever.
+  CInt ->
+  -- | Number of events received
+  IO (Either Errno CInt)
+{-# INLINE waitMutablePrimArray #-}
 waitMutablePrimArray !epfd !evs !maxEvents !timeout =
   let !(MutablePrimArray evs#) = assertMutablePrimArrayPinned evs
    in c_epoll_wait_safe epfd evs# maxEvents timeout >>= errorsFromInt
 
--- | Add, modify, or remove entries in the interest list of the
---   epoll instance referred to by the file descriptor @epfd@.
---   <https://linux.die.net/man/2/epoll_ctl Linux man page>
---   includes more details.
+{- | Add, modify, or remove entries in the interest list of the
+  epoll instance referred to by the file descriptor @epfd@.
+  <https://linux.die.net/man/2/epoll_ctl Linux man page>
+  includes more details.
+-}
 uninterruptibleControlMutablePrimArray ::
-     Fd -- ^ EPoll file descriptor (@epfd@)
-  -> ControlOperation
-     -- ^ Operation: @EPOLL_CTL_ADD@, @EPOLL_CTL_MOD@, or @EPOLL_CTL_DEL@
-  -> Fd -- ^ File descriptor whose registration will be affected
-  -> MutablePrimArray RealWorld (Event 'Request a)
-     -- ^ A single event. This is read from, not written to.
-  -> IO (Either Errno ())
-{-# inline uninterruptibleControlMutablePrimArray #-}
+  -- | EPoll file descriptor (@epfd@)
+  Fd ->
+  -- | Operation: @EPOLL_CTL_ADD@, @EPOLL_CTL_MOD@, or @EPOLL_CTL_DEL@
+  ControlOperation ->
+  -- | File descriptor whose registration will be affected
+  Fd ->
+  -- | A single event. This is read from, not written to.
+  MutablePrimArray RealWorld (Event 'Request a) ->
+  IO (Either Errno ())
+{-# INLINE uninterruptibleControlMutablePrimArray #-}
 uninterruptibleControlMutablePrimArray !epfd !op !fd (MutablePrimArray ev) =
   c_epoll_ctl_unsafe epfd op fd ev >>= errorsFromInt_
 
 errorsFromFd :: Fd -> IO (Either Errno Fd)
-{-# inline errorsFromFd #-}
-errorsFromFd r = if r > (-1)
-  then pure (Right r)
-  else fmap Left getErrno
+{-# INLINE errorsFromFd #-}
+errorsFromFd r =
+  if r > (-1)
+    then pure (Right r)
+    else fmap Left getErrno
 
 errorsFromInt :: CInt -> IO (Either Errno CInt)
-{-# inline errorsFromInt #-}
-errorsFromInt r = if r > (-1)
-  then pure (Right r)
-  else fmap Left getErrno
+{-# INLINE errorsFromInt #-}
+errorsFromInt r =
+  if r > (-1)
+    then pure (Right r)
+    else fmap Left getErrno
 
 -- Sometimes, functions that return an int use zero to indicate
 -- success and negative one to indicate failure without including
 -- additional information in the value.
 errorsFromInt_ :: CInt -> IO (Either Errno ())
-{-# inline errorsFromInt_ #-}
-errorsFromInt_ r = if r == 0
-  then pure (Right ())
-  else fmap Left getErrno
-
+{-# INLINE errorsFromInt_ #-}
+errorsFromInt_ r =
+  if r == 0
+    then pure (Right ())
+    else fmap Left getErrno
