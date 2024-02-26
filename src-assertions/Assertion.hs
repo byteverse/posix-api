@@ -13,23 +13,15 @@ import qualified GHC.Exts as Exts
 
 assertMutablePrimArrayPinned :: PM.MutablePrimArray s a -> PM.MutablePrimArray s a
 assertMutablePrimArrayPinned x =
-  if isMutablePrimArrayPinned x
+  if PM.isMutablePrimArrayPinned x
     then x
     else error "assertMutablePrimArrayPinned"
 
-assertMutableByteArrayPinned :: PM.MutablePrimArray s a -> PM.MutablePrimArray s a
+assertMutableByteArrayPinned :: PM.MutableByteArray s -> PM.MutableByteArray s
 assertMutableByteArrayPinned x =
-  if isMutableByteArrayPinned x
+  if PM.isMutableByteArrayPinned x
     then x
     else error "assertMutableByteArrayPinned"
-
-isMutablePrimArrayPinned :: PM.MutablePrimArray s a -> Bool
-{-# INLINE isMutablePrimArrayPinned #-}
-isMutablePrimArrayPinned (PM.MutablePrimArray marr#) = isTrue# (Exts.isMutableByteArrayPinned# marr#)
-
-isMutableByteArrayPinned :: PM.MutableByteArray s -> Bool
-{-# INLINE isMutableByteArrayPinned #-}
-isMutableByteArrayPinned (PM.MutableByteArray marr#) = isTrue# (Exts.isMutableByteArrayPinned# marr#)
 
 assertByteArrayPinned :: PM.ByteArray -> PM.ByteArray
 assertByteArrayPinned x =

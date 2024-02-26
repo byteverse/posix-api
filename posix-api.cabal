@@ -82,13 +82,6 @@ flag assertions
   description: Extra run-time invariant checking
   default:     False
 
--- This only exists to help get this library to build on hackage.
--- Whenever hackage moves to GHC 9.4, remove this.
-flag unliftedarrayfunctions
-  manual:      True
-  description: Build and export functions using unlifted arrays
-  default:     True
-
 common build-settings
   default-language: Haskell2010
   ghc-options:      -Wall -Wunused-packages
@@ -126,14 +119,11 @@ library
     , base              >=4.16.3 && <5
     , byte-order        >=0.1.2  && <0.2
     , byteslice         >=0.2.10 && <0.3
-    , primitive         >=0.7    && <0.10
+    , primitive         >=0.9    && <0.10
     , primitive-addr    >=0.1    && <0.2
     , primitive-offset  >=0.2    && <0.3
     , run-st            >=0.1.1  && <0.2
     , text-short        >=0.1.5
-
-  if flag(unliftedarrayfunctions)
-    build-depends: primitive-unlifted >=2.1 && <2.2
 
   hs-source-dirs:     src
 
