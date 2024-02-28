@@ -11,7 +11,7 @@
 {-# language PolyKinds #-}
 {-# language ScopedTypeVariables #-}
 {-# language TypeApplications #-}
-{-# language TypeInType #-}
+{-# language DataKinds #-}
 {-# language UnboxedTuples #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
@@ -334,30 +334,3 @@ word64ToWord32 = fromIntegral
 
 unI :: Int -> Int##
 unI (I## i) = i
-
--- -- | Read @data.u64@ from @struct epoll_event@.
--- readEventDataU64 ::
---      MutableByteArray RealWorld
---   -> Int -- ^ Index. Elements are @struct epoll_event@.
---   -> IO Word64
--- readEventDataU64 !arr !ix = do
---   -- On 64-bit platforms, Linux bitpacks this structure, causing the
---   -- data (a 64-bit word) to be misaligned. Consequently, we must
---   -- hardcode the assumed offsets to perform only aligned accesses.
---   -- The behavior is deterministic across platforms of different
---   -- endianness only if the only use of this function is paired with
---   -- writeEventDataU64.
---   (a :: Word32) <- PM.readByteArray arr (ix * 3 + 1)
---   (b :: Word32) <- PM.readByteArray arr (ix * 3 + 2)
---   pure (unsafeShiftL (word32ToWord64 a) 32 .|. word32ToWord64 b)
--- 
--- -- | Write @data.u64@ from @struct epoll_event@.
--- writeEventDataU64 ::
---      MutableByteArray RealWorld
---   -> Int -- ^ Index. Element are @struct epoll_event@.
---   -> Word64 -- ^ Data
---   -> IO ()
--- writeEventDataU64 !arr !ix !payload = do
---   -- See the comments on readEventDataU64
---   PM.writeByteArray arr (ix * 3 + 1) (word64ToWord32 (unsafeShiftR payload 32))
---   PM.writeByteArray arr (ix * 3 + 2) (word64ToWord32 payload)

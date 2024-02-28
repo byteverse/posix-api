@@ -40,7 +40,7 @@ import qualified Data.Primitive as PM
 import qualified Data.Primitive.Addr as PMA
 import qualified Foreign.Storable as FS
 
--- | The size of a serialized internet socket address.  
+-- | The size of a serialized internet socket address.
 sizeofSocketAddressInternet :: CInt
 sizeofSocketAddressInternet = #{size struct sockaddr_in}
 
@@ -115,7 +115,7 @@ indexSocketAddressInternet addr ix = do
 --   error code.
 encodeSocketAddressUnix :: SocketAddressUnix -> SocketAddress
 encodeSocketAddressUnix (SocketAddressUnix !name) =
-  SocketAddress $ runByteArrayST $ unboxByteArrayST $ do 
+  SocketAddress $ runByteArrayST $ unboxByteArrayST $ do
     -- On linux, sun_path always has exactly 108 bytes. It is a null-terminated
     -- string, so we initialize the byte array to zeroes to ensure this
     -- happens.
@@ -142,4 +142,3 @@ unboxByteArrayST (ST f) s = case f s of
 -- data constructor allocation.
 runByteArrayST :: (State## RealWorld -> (## State## RealWorld, ByteArray## ##)) -> ByteArray
 runByteArrayST st_rep = case runRW## st_rep of (## _, a ##) -> ByteArray a
-

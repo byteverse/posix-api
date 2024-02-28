@@ -11,7 +11,7 @@
 {-# language MagicHash #-}
 {-# language UnboxedTuples #-}
 {-# language PolyKinds #-}
-{-# language TypeInType #-}
+{-# language DataKinds #-}
 
 -- This is needed because hsc2hs does not currently handle ticked
 -- promoted data constructors correctly.
@@ -37,12 +37,10 @@ module Posix.Poll.Types
 import Prelude hiding (truncate,error)
 
 import Data.Bits ((.|.),(.&.))
-import Data.Word (Word8,Word16,Word32,Word64)
 import Data.Primitive (Prim(..))
 import Foreign.C.Types (CInt(..),CShort)
 import Foreign.Storable (Storable(..))
-import GHC.Ptr (Ptr(..))
-import GHC.Exts (RealWorld,Int(I##),Int##,(+##),(*##))
+import GHC.Exts (Int(I##),Int##,(+##),(*##))
 import System.Posix.Types (Fd(..))
 
 import qualified Data.Kind
