@@ -150,8 +150,7 @@ test-suite test
   build-depends:
     , base
     , posix-api
-    , primitive           >=0.7
-    , primitive-unlifted
+    , primitive    >=0.7
     , tasty
     , tasty-hunit
 

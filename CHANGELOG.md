@@ -7,10 +7,11 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## 0.7.2.0 -- 2024-02-05
+## 0.7.2.0 -- 2024-02-28
 
 - Add `socket` as alias for `uninterruptibleSocket`.
 - Add `withSocket`.
+- Removed `UNLIFTEDARRAYFUNCTIONS` flag and support for GHC < 9.4.
 
 ## 0.7.1.0 -- 2023-10-03
 

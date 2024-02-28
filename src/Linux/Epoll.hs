@@ -54,9 +54,6 @@ module Linux.Epoll
   , T.peekEventDataU32
   , T.peekEventDataU64
   , T.pokeEventDataU64
-  -- , T.readEventDataU64
-  -- , T.writeEventDataU64
-  -- , T.writeEventEvents
   ) where
 
 import Prelude hiding (error)

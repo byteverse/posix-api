@@ -5,12 +5,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-import Control.Concurrent (forkIO, threadWaitRead, threadWaitWrite)
+import Control.Concurrent (forkIO, threadWaitWrite)
 import Control.Monad (when)
 import Data.Primitive (ByteArray, MutableByteArray (..), MutablePrimArray (..))
-import Data.Word (Word32, Word8)
+import Data.Word (Word8)
 import Foreign.C.Error (Errno, errnoToIOError)
-import Foreign.C.Types (CInt, CSize)
+import Foreign.C.Types (CSize)
 import GHC.Exts (RealWorld)
 import Numeric (showIntAtBase)
 import Test.Tasty
@@ -18,10 +18,8 @@ import Test.Tasty.HUnit
 
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.MVar as PM
-import qualified Data.Primitive.Unlifted.Array as PM
 import qualified GHC.Exts as E
 import qualified Linux.Epoll as Epoll
-import qualified Linux.Socket as L
 import qualified Posix.Socket as S
 
 main :: IO ()
@@ -180,14 +178,8 @@ loadGarbage (MutablePrimArray x) = do
 sample :: ByteArray
 sample = E.fromList [1, 2, 3, 4, 5]
 
-sample2 :: ByteArray
-sample2 = E.fromList [6, 7, 8, 9]
-
 demand :: Either Errno a -> IO a
 demand = either (\e -> ioError (errnoToIOError "test" e Nothing Nothing)) pure
 
 oneWord :: CSize -> IO ()
 oneWord x = if x == fromIntegral (PM.sizeOf (undefined :: Int)) then pure () else fail "expected one machine word"
-
-localhost :: Word32
-localhost = S.hostToNetworkLong 2130706433

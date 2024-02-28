@@ -6,10 +6,7 @@ module Assertion
   , assertMutablePrimArrayPinned
   ) where
 
-import GHC.Exts (isTrue#)
-
 import qualified Data.Primitive as PM
-import qualified GHC.Exts as Exts
 
 assertMutablePrimArrayPinned :: PM.MutablePrimArray s a -> PM.MutablePrimArray s a
 assertMutablePrimArrayPinned x =
