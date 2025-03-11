@@ -16,6 +16,7 @@ module Posix.File
   , writeBytesCompletelyErrno
   , uninterruptibleOpen
   , uninterruptibleOpenMode
+  , uninterruptibleOpenAtMode
   , uninterruptibleOpenUntypedFlags
   , uninterruptibleOpenModeUntypedFlags
   , writeByteArray
@@ -102,6 +103,9 @@ foreign import ccall unsafe "HaskellPosix.h open"
 foreign import ccall unsafe "HaskellPosix.h open"
   c_unsafe_open_mode :: ByteArray# -> CInt -> CMode -> IO Fd
 
+foreign import ccall unsafe "HaskellPosix.h openat"
+  c_unsafe_openat_mode :: Fd -> ByteArray# -> CInt -> CMode -> IO Fd
+
 foreign import ccall unsafe "HaskellPosix.h unlink"
   c_unsafe_unlink :: ByteArray# -> IO CInt
 
@@ -167,6 +171,27 @@ uninterruptibleOpenMode ::
   IO (Either Errno Fd)
 uninterruptibleOpenMode (ManagedCString (ByteArray name)) (AccessMode x) (CreationFlags y) (StatusFlags z) !mode =
   c_unsafe_open_mode name (x .|. y .|. z) mode >>= errorsFromFd
+
+{- | Variant of 'uninterruptibleOpenMode' that lets the user specify a
+directory file descriptor instead of using the working directory as the
+base path.
+-}
+uninterruptibleOpenAtMode ::
+  -- | Base directory
+  Fd ->
+  -- | NULL-terminated file name
+  ManagedCString ->
+  -- | Access mode, should include @O_CREAT@
+  AccessMode ->
+  -- | Creation flags
+  CreationFlags ->
+  -- | Status flags
+  StatusFlags ->
+  -- | Permissions assigned to newly created file
+  CMode ->
+  IO (Either Errno Fd)
+uninterruptibleOpenAtMode !dirFd (ManagedCString (ByteArray name)) (AccessMode x) (CreationFlags y) (StatusFlags z) !mode =
+  c_unsafe_openat_mode dirFd name (x .|. y .|. z) mode >>= errorsFromFd
 
 errorsFromDescriptorFlags :: DescriptorFlags -> IO (Either Errno DescriptorFlags)
 errorsFromDescriptorFlags r@(DescriptorFlags x) =
