@@ -7,6 +7,10 @@ added, changed, deprecated, etc. subsections.
 
 This project adheres to the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## 0.7.3.0 -- 2025-05-28
+
+- Add support for `openat`
+
 ## 0.7.2.0 -- 2024-02-28
 
 - Add `socket` as alias for `uninterruptibleSocket`.
