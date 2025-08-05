@@ -19,6 +19,7 @@ module Posix.File
   , uninterruptibleOpenAtMode
   , uninterruptibleOpenUntypedFlags
   , uninterruptibleOpenModeUntypedFlags
+  , uninterruptibleRenameAt
   , writeByteArray
   , writeMutableByteArray
   , close
@@ -100,6 +101,9 @@ foreign import ccall safe "HaskellPosix.h write_offset"
 foreign import ccall unsafe "HaskellPosix.h open"
   c_unsafe_open :: ByteArray# -> CInt -> IO Fd
 
+foreign import ccall unsafe "HaskellPosix.h renameat"
+  c_unsafe_rename_at :: Fd -> ByteArray# -> Fd -> ByteArray# -> IO CInt
+
 foreign import ccall unsafe "HaskellPosix.h open"
   c_unsafe_open_mode :: ByteArray# -> CInt -> CMode -> IO Fd
 
@@ -117,6 +121,20 @@ foreign import ccall safe "unistd.h close"
 
 foreign import ccall unsafe "unistd.h close"
   c_unsafe_close :: Fd -> IO CInt
+
+-- | Rename a file. This is a wrapper around the POSIX function @renameat@.
+uninterruptibleRenameAt ::
+     -- | Old dir fd
+     Fd
+     -- | Old file name
+  -> ManagedCString
+     -- | New dir fd
+  -> Fd
+     -- | New file name
+  -> ManagedCString
+  -> IO (Either Errno ())
+uninterruptibleRenameAt !oldDirFd (ManagedCString (ByteArray oldName)) !newDirFd (ManagedCString (ByteArray newName)) =
+  c_unsafe_rename_at oldDirFd oldName newDirFd newName >>= errorsFromInt_
 
 uninterruptibleOpen ::
   -- | NULL-terminated file name
