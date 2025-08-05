@@ -124,6 +124,7 @@ library
     , primitive-offset  >=0.2    && <0.3
     , run-st            >=0.1.1  && <0.2
     , text-short        >=0.1.5
+    , text              >=2.1
 
   hs-source-dirs:     src
 

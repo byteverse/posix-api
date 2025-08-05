@@ -13,6 +13,7 @@ module Foreign.C.String.Managed
   , terminatedU
   , unterminated
   , fromBytes
+  , fromText
   , fromLatinString
   , fromShortText
   , pinnedFromBytes
@@ -26,6 +27,7 @@ import Control.Monad.ST.Run (runByteArrayST)
 import Data.Bytes.Types (Bytes (Bytes))
 import Data.Char (ord)
 import Data.Primitive (ByteArray (..), MutableByteArray)
+import Data.Text (Text)
 import Data.Text.Short (ShortText)
 import Data.Word (Word8)
 import Foreign.C.String (CString)
@@ -85,6 +87,9 @@ unterminated (ManagedCString x) = Bytes x 0 (PM.sizeofByteArray x - 1)
 
 fromShortText :: ShortText -> ManagedCString
 fromShortText !ts = fromBytes (Utf8.fromShortText ts)
+
+fromText :: Text -> ManagedCString
+fromText = fromBytes . Utf8.fromText
 
 -- | Copies the slice, appending a @NUL@ byte to the end.
 fromBytes :: Bytes -> ManagedCString
